@@ -67,6 +67,8 @@ export default function Products() {
     district: product.district,
     giBrand: product.giBrand,
     vendorName: "Artisan Vendor",
+    storeId: product.storeId,
+    stock: product.stock,
   })) || [];
 
   const giBrands = categoriesData?.map(cat => cat.giBrand) || [];

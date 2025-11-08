@@ -1,6 +1,6 @@
 import Header from "@/components/Header";
 import Hero from "@/components/Hero";
-import DistrictCard from "@/components/DistrictCard";
+import GIBrandCard from "@/components/GIBrandCard";
 import ProductCard from "@/components/ProductCard";
 import VendorCard from "@/components/VendorCard";
 import Footer from "@/components/Footer";
@@ -37,11 +37,12 @@ export default function Home() {
     queryKey: ['/api/stores?status=approved'],
   });
 
-  const districts = categoriesData?.slice(0, 3).map(cat => ({
-    district: cat.district,
+  // Create unique GI brands from categories
+  const giBrands = categoriesData?.slice(0, 3).map(cat => ({
     giBrand: cat.giBrand,
+    district: cat.district,
     image: districtImages[cat.district] || multanImage,
-    craftCount: productsResponse?.products.filter(p => p.district === cat.district).length || 0,
+    craftCount: productsResponse?.products.filter(p => p.giBrand === cat.giBrand).length || 0,
   })) || [];
 
   const featuredProducts = productsResponse?.products.slice(0, 4).map(product => ({
@@ -52,6 +53,8 @@ export default function Home() {
     district: product.district,
     giBrand: product.giBrand,
     vendorName: storesData?.find(s => s.id === product.storeId)?.name || "Artisan Vendor",
+    storeId: product.storeId,
+    stock: product.stock,
   })) || [];
 
   const topVendors = storesData?.slice(0, 2).map(store => ({
@@ -75,15 +78,15 @@ export default function Home() {
         <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
           <div className="flex items-center justify-between mb-8">
             <div>
-              <h2 className="text-3xl font-bold mb-2" data-testid="text-districts-heading">
-                Shop by District
+              <h2 className="text-3xl font-bold mb-2" data-testid="text-gi-brands-heading">
+                Shop by GI Brand
               </h2>
               <p className="text-muted-foreground">
-                Explore authentic handicrafts from Punjab's renowned regions
+                Explore authentic Geographical Indication certified handicrafts from Punjab's master artisans
               </p>
             </div>
             <Link href="/products">
-              <Button variant="ghost" data-testid="button-view-all-districts">
+              <Button variant="ghost" data-testid="button-view-all-gi-brands">
                 View All
                 <ArrowRight className="ml-2 w-4 h-4" />
               </Button>
@@ -98,8 +101,8 @@ export default function Home() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {districts.map((district) => (
-                <DistrictCard key={district.district} {...district} />
+              {giBrands.map((brand) => (
+                <GIBrandCard key={brand.giBrand} {...brand} />
               ))}
             </div>
           )}

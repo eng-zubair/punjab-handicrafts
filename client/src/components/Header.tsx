@@ -13,23 +13,23 @@ import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { getCartCount } from "@/lib/cart";
 
-const districts = [
-  "All Districts",
-  "Lahore",
-  "Multan",
-  "Bahawalpur",
-  "Faisalabad",
-  "Gujranwala",
-  "Rawalpindi",
-  "Sahiwal",
-  "Sargodha",
-  "D.G. Khan"
+const giBrands = [
+  "All GI Brands",
+  "Lahore Heritage Crafts",
+  "Multani Crafts",
+  "Cholistani Heritage",
+  "Faisalabadi Weaves",
+  "Punjab Metal & Leather Works",
+  "Pothohari Crafts",
+  "Sufi Craft Collection",
+  "Salt & Stone Crafts",
+  "Saraiki Tribal Arts"
 ];
 
 export default function Header() {
   const [cartCount, setCartCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedDistrict, setSelectedDistrict] = useState("all");
+  const [selectedGIBrand, setSelectedGIBrand] = useState("all");
   const [isDark, setIsDark] = useState(false);
   const [, setLocation] = useLocation();
 
@@ -52,12 +52,12 @@ export default function Header() {
     }
   };
 
-  const handleDistrictChange = (district: string) => {
-    setSelectedDistrict(district);
-    if (district === "all") {
+  const handleGIBrandChange = (giBrand: string) => {
+    setSelectedGIBrand(giBrand);
+    if (giBrand === "all") {
       setLocation('/products');
     } else {
-      setLocation(`/products?district=${encodeURIComponent(district)}`);
+      setLocation(`/products?giBrand=${encodeURIComponent(giBrand)}`);
     }
   };
 
@@ -82,15 +82,15 @@ export default function Header() {
           </div>
 
           <div className="hidden md:flex items-center gap-3 flex-1 max-w-2xl">
-            <Select value={selectedDistrict} onValueChange={handleDistrictChange}>
-              <SelectTrigger className="w-44" data-testid="select-district">
-                <SelectValue placeholder="All Districts" />
+            <Select value={selectedGIBrand} onValueChange={handleGIBrandChange}>
+              <SelectTrigger className="w-56" data-testid="select-gi-brand">
+                <SelectValue placeholder="All GI Brands" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Districts</SelectItem>
-                {districts.slice(1).map((district) => (
-                  <SelectItem key={district} value={district}>
-                    {district}
+                <SelectItem value="all">All GI Brands</SelectItem>
+                {giBrands.slice(1).map((brand) => (
+                  <SelectItem key={brand} value={brand}>
+                    {brand}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -171,15 +171,15 @@ export default function Header() {
               <Search className="w-4 h-4" />
             </Button>
           </div>
-          <Select value={selectedDistrict} onValueChange={handleDistrictChange}>
-            <SelectTrigger className="w-full" data-testid="select-district-mobile">
-              <SelectValue placeholder="All Districts" />
+          <Select value={selectedGIBrand} onValueChange={handleGIBrandChange}>
+            <SelectTrigger className="w-full" data-testid="select-gi-brand-mobile">
+              <SelectValue placeholder="All GI Brands" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Districts</SelectItem>
-              {districts.slice(1).map((district) => (
-                <SelectItem key={district} value={district}>
-                  {district}
+              <SelectItem value="all">All GI Brands</SelectItem>
+              {giBrands.slice(1).map((brand) => (
+                <SelectItem key={brand} value={brand}>
+                  {brand}
                 </SelectItem>
               ))}
             </SelectContent>

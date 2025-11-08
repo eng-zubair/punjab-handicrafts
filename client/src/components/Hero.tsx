@@ -1,10 +1,17 @@
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
+import { useLocation } from "wouter";
 import heroBanner from '@assets/generated_images/Hero_banner_Punjab_handicrafts_e3fb83c0.png';
 
 export default function Hero() {
+  const [, setLocation] = useLocation();
+
   const handleExplore = () => {
-    console.log('Navigate to GI Crafts');
+    setLocation('/products');
+  };
+
+  const handleBecomeVendor = () => {
+    setLocation('/vendor/register');
   };
 
   return (
@@ -40,6 +47,7 @@ export default function Hero() {
               size="lg" 
               variant="outline" 
               className="backdrop-blur-sm bg-white/10 border-white/30 text-white hover:bg-white/20"
+              onClick={handleBecomeVendor}
               data-testid="button-become-vendor"
             >
               Become a Vendor
