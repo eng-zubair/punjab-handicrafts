@@ -7,6 +7,7 @@ import Footer from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import type { Category, Product, Store } from "@shared/schema";
 
 import multanImage from '@assets/generated_images/Multan_blue_pottery_workshop_21555b73.png';
@@ -81,10 +82,12 @@ export default function Home() {
                 Explore authentic handicrafts from Punjab's renowned regions
               </p>
             </div>
-            <Button variant="ghost" data-testid="button-view-all-districts">
-              View All
-              <ArrowRight className="ml-2 w-4 h-4" />
-            </Button>
+            <Link href="/products">
+              <Button variant="ghost" data-testid="button-view-all-districts">
+                View All
+                <ArrowRight className="ml-2 w-4 h-4" />
+              </Button>
+            </Link>
           </div>
           
           {isLoading ? (
@@ -113,10 +116,12 @@ export default function Home() {
                   Handpicked authentic crafts from master artisans
                 </p>
               </div>
-              <Button variant="ghost" data-testid="button-view-all-products">
-                View All
-                <ArrowRight className="ml-2 w-4 h-4" />
-              </Button>
+              <Link href="/products">
+                <Button variant="ghost" data-testid="button-view-all-products">
+                  View All
+                  <ArrowRight className="ml-2 w-4 h-4" />
+                </Button>
+              </Link>
             </div>
             
             {isLoading ? (
