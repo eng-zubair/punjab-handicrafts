@@ -6,94 +6,64 @@ import VendorCard from "@/components/VendorCard";
 import Footer from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import type { Category, Product, Store } from "@shared/schema";
 
 import multanImage from '@assets/generated_images/Multan_blue_pottery_workshop_21555b73.png';
 import bahawalpurImage from '@assets/generated_images/Bahawalpur_Ralli_quilts_display_07a38e65.png';
 import lahoreImage from '@assets/generated_images/Lahore_jewelry_and_embroidery_39a642f1.png';
-import khussaImage from '@assets/generated_images/Handmade_khussa_footwear_product_06baa0d0.png';
 import vendorAvatar from '@assets/generated_images/Artisan_vendor_profile_portrait_cf010960.png';
 
+const districtImages: Record<string, string> = {
+  "Multan": multanImage,
+  "Bahawalpur": bahawalpurImage,
+  "Lahore": lahoreImage,
+};
+
 export default function Home() {
-  const districts = [
-    {
-      district: "Multan",
-      giBrand: "Multani Crafts",
-      image: multanImage,
-      craftCount: 8,
-    },
-    {
-      district: "Bahawalpur",
-      giBrand: "Cholistani Heritage",
-      image: bahawalpurImage,
-      craftCount: 6,
-    },
-    {
-      district: "Lahore",
-      giBrand: "Lahore Heritage Crafts",
-      image: lahoreImage,
-      craftCount: 5,
-    },
-  ];
+  const { data: categoriesData, isLoading: categoriesLoading } = useQuery<Category[]>({
+    queryKey: ['/api/categories'],
+  });
 
-  const featuredProducts = [
-    {
-      id: "1",
-      title: "Handcrafted Multani Blue Pottery Vase",
-      price: 3500,
-      image: multanImage,
-      district: "Multan",
-      giBrand: "Multani Crafts",
-      vendorName: "Ahmad Pottery Works",
-    },
-    {
-      id: "2",
-      title: "Traditional Bahawalpur Ralli Quilt",
-      price: 8500,
-      image: bahawalpurImage,
-      district: "Bahawalpur",
-      giBrand: "Cholistani Heritage",
-      vendorName: "Fatima Textile Studio",
-    },
-    {
-      id: "3",
-      title: "Handmade Lahore Adda Work Jewelry Set",
-      price: 4200,
-      image: lahoreImage,
-      district: "Lahore",
-      giBrand: "Lahore Heritage Crafts",
-      vendorName: "Heritage Jewelers",
-    },
-    {
-      id: "4",
-      title: "Embroidered Multani Khussa Pair",
-      price: 2800,
-      image: khussaImage,
-      district: "Multan",
-      giBrand: "Multani Crafts",
-      vendorName: "Royal Footwear",
-    },
-  ];
+  const { data: productsResponse, isLoading: productsLoading } = useQuery<{
+    products: Product[];
+    pagination: { total: number };
+  }>({
+    queryKey: ['/api/products?status=approved&pageSize=8'],
+  });
 
-  const topVendors = [
-    {
-      id: "1",
-      name: "Ahmad Pottery Works",
-      district: "Multan",
-      giBrands: ["Multani Crafts"],
-      rating: 4.8,
-      totalProducts: 42,
-      avatar: vendorAvatar,
-    },
-    {
-      id: "2",
-      name: "Fatima Textile Studio",
-      district: "Bahawalpur",
-      giBrands: ["Cholistani Heritage"],
-      rating: 4.9,
-      totalProducts: 38,
-      avatar: vendorAvatar,
-    },
-  ];
+  const { data: storesData, isLoading: storesLoading } = useQuery<Store[]>({
+    queryKey: ['/api/stores?status=approved'],
+  });
+
+  const districts = categoriesData?.slice(0, 3).map(cat => ({
+    district: cat.district,
+    giBrand: cat.giBrand,
+    image: districtImages[cat.district] || multanImage,
+    craftCount: productsResponse?.products.filter(p => p.district === cat.district).length || 0,
+  })) || [];
+
+  const featuredProducts = productsResponse?.products.slice(0, 4).map(product => ({
+    id: product.id,
+    title: product.title,
+    price: Number(product.price),
+    image: product.images[0] || multanImage,
+    district: product.district,
+    giBrand: product.giBrand,
+    vendorName: storesData?.find(s => s.id === product.storeId)?.name || "Artisan Vendor",
+  })) || [];
+
+  const topVendors = storesData?.slice(0, 2).map(store => ({
+    id: store.id,
+    name: store.name,
+    district: store.district,
+    giBrands: store.giBrands,
+    rating: 4.8,
+    totalProducts: productsResponse?.products.filter(p => p.storeId === store.id).length || 0,
+    avatar: vendorAvatar,
+  })) || [];
+
+  const isLoading = categoriesLoading || productsLoading || storesLoading;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -117,11 +87,19 @@ export default function Home() {
             </Button>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {districts.map((district) => (
-              <DistrictCard key={district.district} {...district} />
-            ))}
-          </div>
+          {isLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-64 bg-muted/50 rounded-lg animate-pulse" />
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {districts.map((district) => (
+                <DistrictCard key={district.district} {...district} />
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="bg-muted/30 py-16">
@@ -141,11 +119,19 @@ export default function Home() {
               </Button>
             </div>
             
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              {featuredProducts.map((product) => (
-                <ProductCard key={product.id} {...product} />
-              ))}
-            </div>
+            {isLoading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="h-80 bg-muted/50 rounded-lg animate-pulse" />
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                {featuredProducts.map((product) => (
+                  <ProductCard key={product.id} {...product} />
+                ))}
+              </div>
+            )}
           </div>
         </section>
 
@@ -165,11 +151,19 @@ export default function Home() {
             </Button>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {topVendors.map((vendor) => (
-              <VendorCard key={vendor.id} {...vendor} />
-            ))}
-          </div>
+          {isLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {[1, 2].map((i) => (
+                <div key={i} className="h-48 bg-muted/50 rounded-lg animate-pulse" />
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {topVendors.map((vendor) => (
+                <VendorCard key={vendor.id} {...vendor} />
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="bg-primary text-primary-foreground py-16">
