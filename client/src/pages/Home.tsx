@@ -13,12 +13,20 @@ import type { Category, Product, Store } from "@shared/schema";
 import multanImage from '@assets/generated_images/Multan_blue_pottery_workshop_21555b73.png';
 import bahawalpurImage from '@assets/generated_images/Bahawalpur_Ralli_quilts_display_07a38e65.png';
 import lahoreImage from '@assets/generated_images/Lahore_jewelry_and_embroidery_39a642f1.png';
+import khussaImage from '@assets/generated_images/Handmade_khussa_footwear_product_06baa0d0.png';
 import vendorAvatar from '@assets/generated_images/Artisan_vendor_profile_portrait_cf010960.png';
 
 const districtImages: Record<string, string> = {
   "Multan": multanImage,
   "Bahawalpur": bahawalpurImage,
   "Lahore": lahoreImage,
+};
+
+const imagePathMap: Record<string, string> = {
+  "/attached_assets/generated_images/Lahore_jewelry_and_embroidery_39a642f1.png": lahoreImage,
+  "/attached_assets/generated_images/Multan_blue_pottery_workshop_21555b73.png": multanImage,
+  "/attached_assets/generated_images/Bahawalpur_Ralli_quilts_display_07a38e65.png": bahawalpurImage,
+  "/attached_assets/generated_images/Handmade_khussa_footwear_product_06baa0d0.png": khussaImage,
 };
 
 export default function Home() {
@@ -49,7 +57,7 @@ export default function Home() {
     id: product.id,
     title: product.title,
     price: Number(product.price),
-    image: product.images[0] || multanImage,
+    image: imagePathMap[product.images[0]] || product.images[0] || multanImage,
     district: product.district,
     giBrand: product.giBrand,
     vendorName: storesData?.find(s => s.id === product.storeId)?.name || "Artisan Vendor",

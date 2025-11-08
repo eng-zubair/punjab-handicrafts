@@ -14,6 +14,16 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircle } from "lucide-react";
 
 import multanImage from '@assets/generated_images/Multan_blue_pottery_workshop_21555b73.png';
+import bahawalpurImage from '@assets/generated_images/Bahawalpur_Ralli_quilts_display_07a38e65.png';
+import lahoreImage from '@assets/generated_images/Lahore_jewelry_and_embroidery_39a642f1.png';
+import khussaImage from '@assets/generated_images/Handmade_khussa_footwear_product_06baa0d0.png';
+
+const imagePathMap: Record<string, string> = {
+  "/attached_assets/generated_images/Lahore_jewelry_and_embroidery_39a642f1.png": lahoreImage,
+  "/attached_assets/generated_images/Multan_blue_pottery_workshop_21555b73.png": multanImage,
+  "/attached_assets/generated_images/Bahawalpur_Ralli_quilts_display_07a38e65.png": bahawalpurImage,
+  "/attached_assets/generated_images/Handmade_khussa_footwear_product_06baa0d0.png": khussaImage,
+};
 
 export default function Products() {
   const [search, setSearch] = useState("");
@@ -63,7 +73,7 @@ export default function Products() {
     id: product.id,
     title: product.title,
     price: Number(product.price),
-    image: product.images[0] || multanImage,
+    image: imagePathMap[product.images[0]] || product.images[0] || multanImage,
     district: product.district,
     giBrand: product.giBrand,
     vendorName: "Artisan Vendor",
