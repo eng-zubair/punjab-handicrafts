@@ -7,11 +7,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Search, ShoppingCart, User, Menu, Moon, Sun } from "lucide-react";
+import { Search, ShoppingCart, User, Menu, Moon, Sun, Store, LayoutDashboard, LogOut } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { getCartCount } from "@/lib/cart";
+import { useAuth } from "@/hooks/use-auth";
 
 const giBrands = [
   "All GI Brands",
@@ -27,6 +37,7 @@ const giBrands = [
 ];
 
 export default function Header() {
+  const { user, isAuthenticated, isVendor, login, logout } = useAuth();
   const [cartCount, setCartCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedGIBrand, setSelectedGIBrand] = useState("all");
@@ -143,9 +154,53 @@ export default function Header() {
                 )}
               </Button>
             </Link>
-            <Button variant="ghost" size="icon" data-testid="button-user" aria-label="User menu">
-              <User className="w-5 h-5" />
-            </Button>
+            
+            {isAuthenticated ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" data-testid="button-user-menu" aria-label="User menu" className="rounded-full">
+                    <Avatar className="h-8 w-8">
+                      <AvatarImage src={user?.profileImageUrl || undefined} alt={user?.firstName || "User"} />
+                      <AvatarFallback>
+                        {user?.firstName?.[0]}{user?.lastName?.[0]}
+                      </AvatarFallback>
+                    </Avatar>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>
+                    <div className="flex flex-col space-y-1">
+                      <p className="text-sm font-medium" data-testid="text-user-name">
+                        {user?.firstName} {user?.lastName}
+                      </p>
+                      <p className="text-xs text-muted-foreground" data-testid="text-user-email">
+                        {user?.email}
+                      </p>
+                    </div>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {isVendor && (
+                    <>
+                      <DropdownMenuItem asChild>
+                        <Link href="/vendor/dashboard">
+                          <LayoutDashboard className="w-4 h-4 mr-2" />
+                          <span data-testid="link-vendor-dashboard">Vendor Dashboard</span>
+                        </Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
+                  <DropdownMenuItem onClick={logout} data-testid="button-logout">
+                    <LogOut className="w-4 h-4 mr-2" />
+                    <span>Logout</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button variant="default" size="sm" onClick={login} data-testid="button-login">
+                Login
+              </Button>
+            )}
           </div>
         </div>
 
