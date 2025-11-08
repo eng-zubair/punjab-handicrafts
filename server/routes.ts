@@ -68,6 +68,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post('/api/auth/register-vendor', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      if (user.role === "vendor") {
+        return res.status(400).json({ message: "User is already a vendor" });
+      }
+
+      const { name, description, district, giBrands } = req.body;
+
+      if (!name || !district || !giBrands || !Array.isArray(giBrands) || giBrands.length === 0) {
+        return res.status(400).json({ message: "Store name, district, and at least one GI brand are required" });
+      }
+
+      await storage.updateUserRole(userId, "vendor");
+      
+      const validatedStoreData = insertStoreSchema.parse({
+        vendorId: userId,
+        name,
+        description: description || "",
+        district,
+        giBrands,
+        status: "pending",
+      });
+
+      const store = await storage.createStore(validatedStoreData);
+      const updatedUser = await storage.getUser(userId);
+
+      res.status(201).json({ user: updatedUser, store });
+    } catch (error: any) {
+      console.error("Error registering vendor:", error);
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid store data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to register as vendor" });
+    }
+  });
+
   // Product browsing routes
   app.get('/api/products', async (req, res) => {
     try {
