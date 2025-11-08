@@ -9,8 +9,9 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Search, ShoppingCart, User, Menu, Moon, Sun } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
+import { getCartCount } from "@/lib/cart";
 
 const districts = [
   "All Districts",
@@ -26,11 +27,22 @@ const districts = [
 ];
 
 export default function Header() {
-  const [cartCount] = useState(3);
+  const [cartCount, setCartCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDistrict, setSelectedDistrict] = useState("all");
   const [isDark, setIsDark] = useState(false);
   const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    setCartCount(getCartCount());
+    
+    const handleCartUpdate = () => {
+      setCartCount(getCartCount());
+    };
+
+    window.addEventListener('cart-updated', handleCartUpdate);
+    return () => window.removeEventListener('cart-updated', handleCartUpdate);
+  }, []);
 
   const handleSearch = () => {
     if (searchQuery.trim()) {

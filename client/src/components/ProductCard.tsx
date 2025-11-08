@@ -4,15 +4,21 @@ import DistrictBadge from "./DistrictBadge";
 import GITag from "./GITag";
 import { ShoppingCart } from "lucide-react";
 import { useState } from "react";
+import { useLocation } from "wouter";
+import { addToCart } from "@/lib/cart";
+import { useToast } from "@/hooks/use-toast";
+import { formatPrice } from "@/lib/utils/price";
 
 interface ProductCardProps {
   id: string;
   title: string;
-  price: number;
+  price: number | string;
   image: string;
   district: string;
   giBrand: string;
   vendorName: string;
+  storeId?: string;
+  stock?: number;
 }
 
 export default function ProductCard({
@@ -23,18 +29,46 @@ export default function ProductCard({
   district,
   giBrand,
   vendorName,
+  storeId = '',
+  stock = 10,
 }: ProductCardProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
 
-  const handleAddToCart = () => {
-    console.log(`Added ${title} to cart`);
+  const handleCardClick = () => {
+    setLocation(`/products/${id}`);
+  };
+
+  const handleAddToCart = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    const priceStr = typeof price === 'number' ? price.toString() : price;
+    
+    addToCart({
+      productId: id,
+      title,
+      price: priceStr,
+      image,
+      district,
+      giBrand,
+      storeId,
+      storeName: vendorName,
+      stock,
+    }, 1);
+
+    toast({
+      title: "Added to cart",
+      description: `${title} added to your cart.`,
+    });
   };
 
   return (
     <Card
-      className="overflow-hidden transition-all hover-elevate active-elevate-2"
+      className="overflow-hidden transition-all hover-elevate active-elevate-2 cursor-pointer"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      onClick={handleCardClick}
       data-testid={`card-product-${id}`}
     >
       <CardHeader className="p-0">
@@ -59,7 +93,7 @@ export default function ProductCard({
           by {vendorName}
         </p>
         <p className="text-2xl font-bold text-primary" data-testid={`text-price-${id}`}>
-          Rs. {price.toLocaleString()}
+          {formatPrice(price)}
         </p>
       </CardContent>
       <CardFooter className="p-4 pt-0">
