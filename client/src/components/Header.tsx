@@ -96,20 +96,20 @@ export default function Header() {
               </SelectContent>
             </Select>
 
-            <div className="flex-1 relative">
+            <div className="flex-1 flex items-center relative">
               <Input
                 type="search"
                 placeholder="Search handicrafts..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                className="pr-10"
+                className="flex-1 pr-10"
                 data-testid="input-search"
               />
               <Button
                 size="icon"
                 variant="ghost"
-                className="absolute right-0 top-0"
+                className="absolute right-0 top-1/2 -translate-y-1/2"
                 onClick={handleSearch}
                 data-testid="button-search"
                 aria-label="Search products"
@@ -150,20 +150,20 @@ export default function Header() {
         </div>
 
         <div className="md:hidden pb-3 space-y-2">
-          <div className="relative">
+          <div className="flex items-center relative">
             <Input
               type="search"
               placeholder="Search handicrafts..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              className="pr-10"
+              className="flex-1 pr-10"
               data-testid="input-search-mobile"
             />
             <Button
               size="icon"
               variant="ghost"
-              className="absolute right-0 top-0"
+              className="absolute right-0 top-1/2 -translate-y-1/2"
               onClick={handleSearch}
               data-testid="button-search-mobile"
               aria-label="Search"
