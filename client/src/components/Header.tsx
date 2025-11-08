@@ -22,6 +22,7 @@ import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { getCartCount } from "@/lib/cart";
 import { useAuth } from "@/hooks/use-auth";
+import { useTheme } from "@/components/ThemeProvider";
 
 const giBrands = [
   "All GI Brands",
@@ -38,10 +39,10 @@ const giBrands = [
 
 export default function Header() {
   const { user, isAuthenticated, isVendor, login, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const [cartCount, setCartCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedGIBrand, setSelectedGIBrand] = useState("all");
-  const [isDark, setIsDark] = useState(false);
   const [, setLocation] = useLocation();
 
   useEffect(() => {
@@ -72,10 +73,6 @@ export default function Header() {
     }
   };
 
-  const toggleTheme = () => {
-    setIsDark(!isDark);
-    document.documentElement.classList.toggle('dark');
-  };
 
   return (
     <header className="sticky top-0 z-50 bg-background border-b">
@@ -138,7 +135,7 @@ export default function Header() {
               data-testid="button-theme-toggle"
               aria-label="Toggle theme"
             >
-              {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </Button>
             <Link href="/cart">
               <Button variant="ghost" size="icon" className="relative" data-testid="button-cart" aria-label="Shopping cart">

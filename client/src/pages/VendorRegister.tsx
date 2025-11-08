@@ -46,7 +46,7 @@ export default function VendorRegister() {
         title: "Registration Successful",
         description: "Your vendor application has been submitted for review. You'll be notified once approved.",
       });
-      setLocation("/");
+      setLocation("/vendor/dashboard");
     },
     onError: (error: any) => {
       toast({
@@ -134,8 +134,8 @@ export default function VendorRegister() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Button onClick={() => setLocation("/")} className="w-full" data-testid="button-goto-home">
-              Go to Homepage
+            <Button onClick={() => setLocation("/vendor/dashboard")} className="w-full" data-testid="button-goto-dashboard">
+              Go to Dashboard
             </Button>
           </CardContent>
         </Card>
