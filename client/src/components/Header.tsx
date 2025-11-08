@@ -109,7 +109,7 @@ export default function Header() {
               <Button
                 size="icon"
                 variant="ghost"
-                className="absolute right-0 top-1/2 -translate-y-1/2 mt-[25px]"
+                className="absolute right-0 top-1/2 -translate-y-1/2 mt-[35px]"
                 onClick={handleSearch}
                 data-testid="button-search"
                 aria-label="Search products"
@@ -163,7 +163,7 @@ export default function Header() {
             <Button
               size="icon"
               variant="ghost"
-              className="absolute right-0 top-1/2 -translate-y-1/2 mt-[25px]"
+              className="absolute right-0 top-1/2 -translate-y-1/2 mt-[35px]"
               onClick={handleSearch}
               data-testid="button-search-mobile"
               aria-label="Search"
