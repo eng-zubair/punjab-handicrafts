@@ -257,8 +257,17 @@ async function seed() {
     console.log("Seed completed successfully!");
   } catch (error) {
     console.error("Error seeding database:", error);
-    process.exit(1);
+    throw error;
   }
 }
 
-seed();
+// Export the seed function for use in API endpoint
+export { seed };
+
+// Run seed if this file is executed directly
+if (import.meta.url === `file://${process.argv[1]}`) {
+  seed().catch((error) => {
+    console.error("Seed failed:", error);
+    process.exit(1);
+  });
+}
