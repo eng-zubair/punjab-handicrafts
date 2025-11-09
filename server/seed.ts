@@ -103,50 +103,53 @@ async function seed() {
     }
 
     // Create sample stores
-    const store1Id = "store-1-lahore";
-    const store2Id = "store-2-multan";
-    const store3Id = "store-3-bahawalpur";
+    let store1Id: string;
+    let store2Id: string;
+    let store3Id: string;
 
-    const existingStore1 = await storage.getStore(store1Id);
-    if (!existingStore1) {
-      await storage.createStore({
-        id: store1Id,
+    const existingStores = await storage.getStoresByVendor(vendor1Id);
+    if (existingStores.length === 0) {
+      const store1 = await storage.createStore({
         vendorId: vendor1Id,
         name: "Lahore Heritage Emporium",
         description: "Authentic handcrafted jewelry and embroidery from Lahore's master artisans",
         district: "Lahore",
         giBrands: ["Lahore Heritage Crafts"],
-        status: "approved",
       });
+      store1Id = store1.id;
       console.log("Created store 1");
+    } else {
+      store1Id = existingStores[0].id;
     }
 
-    const existingStore2 = await storage.getStore(store2Id);
-    if (!existingStore2) {
-      await storage.createStore({
-        id: store2Id,
+    const existingStores2 = await storage.getStoresByVendor(vendor2Id);
+    if (existingStores2.length === 0) {
+      const store2 = await storage.createStore({
         vendorId: vendor2Id,
         name: "Multani Blue Pottery House",
         description: "Traditional blue pottery and khussa footwear crafted with generations of expertise",
         district: "Multan",
         giBrands: ["Multani Crafts"],
-        status: "approved",
       });
+      store2Id = store2.id;
       console.log("Created store 2");
+    } else {
+      store2Id = existingStores2[0].id;
     }
 
-    const existingStore3 = await storage.getStore(store3Id);
-    if (!existingStore3) {
-      await storage.createStore({
-        id: store3Id,
+    const existingStores3 = await storage.getStoresByVendor(vendor3Id);
+    if (existingStores3.length === 0) {
+      const store3 = await storage.createStore({
         vendorId: vendor3Id,
         name: "Cholistani Ralli Crafts",
         description: "Beautiful Ralli quilts and traditional embroidery from Bahawalpur",
         district: "Bahawalpur",
         giBrands: ["Cholistani Heritage"],
-        status: "approved",
       });
+      store3Id = store3.id;
       console.log("Created store 3");
+    } else {
+      store3Id = existingStores3[0].id;
     }
 
     // Create sample products with actual image paths
