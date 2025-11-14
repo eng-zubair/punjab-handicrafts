@@ -12,6 +12,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Store, Loader2 } from "lucide-react";
+import { AuthDialog } from "@/components/AuthDialog";
 
 const districts = [
   { district: "Lahore", giBrand: "Lahore Heritage Crafts" },
@@ -26,7 +27,7 @@ const districts = [
 ];
 
 export default function VendorRegister() {
-  const { user, isAuthenticated, isVendor, login } = useAuth();
+  const { user, isAuthenticated, isVendor } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
@@ -34,6 +35,8 @@ export default function VendorRegister() {
   const [description, setDescription] = useState("");
   const [selectedDistrict, setSelectedDistrict] = useState("");
   const [selectedGIBrands, setSelectedGIBrands] = useState<string[]>([]);
+  const [authDialogOpen, setAuthDialogOpen] = useState(false);
+  const [authDialogTab, setAuthDialogTab] = useState<"login" | "register">("login");
 
   const registerMutation = useMutation({
     mutationFn: async (data: { name: string; description: string; district: string; giBrands: string[] }) => {
@@ -103,22 +106,36 @@ export default function VendorRegister() {
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-muted/30">
-        <Card className="max-w-md w-full">
-          <CardHeader className="space-y-2 text-center">
-            <Store className="w-12 h-12 mx-auto text-primary" />
-            <CardTitle>Become a Vendor</CardTitle>
-            <CardDescription>
-              You need to be logged in to register as a vendor
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button onClick={login} className="w-full" data-testid="button-login-vendor">
-              Login to Continue
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+      <>
+        <div className="min-h-screen flex items-center justify-center p-4 bg-muted/30">
+          <Card className="max-w-md w-full">
+            <CardHeader className="space-y-2 text-center">
+              <Store className="w-12 h-12 mx-auto text-primary" />
+              <CardTitle>Become a Vendor</CardTitle>
+              <CardDescription>
+                You need to be logged in to register as a vendor
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button 
+                onClick={() => {
+                  setAuthDialogTab("login");
+                  setAuthDialogOpen(true);
+                }} 
+                className="w-full" 
+                data-testid="button-login-vendor"
+              >
+                Login to Continue
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+        <AuthDialog 
+          open={authDialogOpen} 
+          onOpenChange={setAuthDialogOpen}
+          defaultTab={authDialogTab}
+        />
+      </>
     );
   }
 
