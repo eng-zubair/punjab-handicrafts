@@ -56,7 +56,7 @@ export default function AdminModeration() {
       return apiRequest('PUT', `/api/admin/stores/${id}/status`, { status });
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/admin/stores'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/stores?status=pending'] });
       queryClient.invalidateQueries({ queryKey: ['/api/admin/analytics'] });
       toast({
         title: "Store updated",
@@ -77,7 +77,7 @@ export default function AdminModeration() {
       return apiRequest('PUT', `/api/admin/products/${id}/status`, { status });
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/admin/products'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/products?status=pending'] });
       queryClient.invalidateQueries({ queryKey: ['/api/admin/analytics'] });
       toast({
         title: "Product updated",
