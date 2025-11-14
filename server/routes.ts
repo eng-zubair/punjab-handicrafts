@@ -1,8 +1,12 @@
 import type { Express, RequestHandler } from "express";
+import express from "express";
 import { createServer, type Server } from "http";
 import passport from "passport";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated, hashPassword } from "./auth";
+import multer from "multer";
+import path from "path";
+import fs from "fs/promises";
 import {
   insertStoreSchema,
   insertProductSchema,
@@ -57,9 +61,119 @@ const isAdmin: RequestHandler = async (req: any, res, next) => {
   }
 };
 
+// Configure multer for secure file uploads
+const uploadStorage = multer.diskStorage({
+  destination: async (req: any, file, cb) => {
+    try {
+      // Get store ID from request body or query
+      const storeId = req.body.storeId || req.query.storeId;
+      if (!storeId) {
+        return cb(new Error("Store ID is required"), "");
+      }
+      
+      // Create directory if it doesn't exist
+      const uploadDir = path.join(process.cwd(), "uploads", "product-images", storeId);
+      await fs.mkdir(uploadDir, { recursive: true });
+      cb(null, uploadDir);
+    } catch (error) {
+      cb(error as Error, "");
+    }
+  },
+  filename: (req, file, cb) => {
+    // Sanitize filename: timestamp + random string + safe extension
+    const timestamp = Date.now();
+    const randomStr = Math.random().toString(36).substring(2, 8);
+    const ext = path.extname(file.originalname).toLowerCase();
+    const sanitizedName = `${timestamp}-${randomStr}${ext}`;
+    cb(null, sanitizedName);
+  },
+});
+
+// File filter for security
+const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+  // Only allow specific image MIME types
+  const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+  const allowedExts = ['.jpg', '.jpeg', '.png', '.webp'];
+  
+  const ext = path.extname(file.originalname).toLowerCase();
+  
+  if (allowedMimes.includes(file.mimetype) && allowedExts.includes(ext)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only JPEG, PNG, and WebP images are allowed'));
+  }
+};
+
+const upload = multer({
+  storage: uploadStorage,
+  fileFilter: fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit per file
+    files: 5, // Max 5 files per upload
+  },
+});
+
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Serve uploaded files statically
+  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
   // Setup Authentication
   await setupAuth(app);
+
+  // File Upload Routes
+  // Note: storeId must be passed as query parameter because multer parses multipart before req.body is available
+  app.post('/api/upload/product-images', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      // Get storeId from query string (required before multer parsing)
+      const storeId = req.query.storeId;
+      
+      if (!storeId) {
+        return res.status(400).json({ message: "Store ID is required in query string" });
+      }
+
+      // Verify store ownership before allowing upload
+      const store = await storage.getStore(storeId);
+      if (!store) {
+        return res.status(404).json({ message: "Store not found" });
+      }
+
+      if (store.vendorId !== req.userId) {
+        return res.status(403).json({ message: "You do not have permission to upload images for this store" });
+      }
+
+      // Use multer middleware to handle the upload
+      upload.array('images', 5)(req, res, (err) => {
+        if (err instanceof multer.MulterError) {
+          if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({ message: 'File size cannot exceed 5MB' });
+          }
+          if (err.code === 'LIMIT_FILE_COUNT') {
+            return res.status(400).json({ message: 'Cannot upload more than 5 files' });
+          }
+          return res.status(400).json({ message: err.message });
+        } else if (err) {
+          return res.status(400).json({ message: err.message });
+        }
+
+        const files = req.files as Express.Multer.File[];
+        if (!files || files.length === 0) {
+          return res.status(400).json({ message: 'No files uploaded' });
+        }
+
+        // Return public URLs for uploaded files
+        // TODO: Consider adding server-side file-type verification and image optimization for production
+        const imagePaths = files.map(file => {
+          const relativePath = path.relative(process.cwd(), file.path);
+          return `/${relativePath.replace(/\\/g, '/')}`;
+        });
+
+        res.json({ images: imagePaths });
+      });
+    } catch (error) {
+      console.error("Error uploading product images:", error);
+      res.status(500).json({ message: "Failed to upload images" });
+    }
+  });
 
   // Authentication routes
   app.post('/api/auth/register', async (req, res) => {
@@ -561,7 +675,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const uniqueOrders = Array.from(
         new Map(allOrders.flat().map(order => [order.id, order])).values()
       );
-      res.json(uniqueOrders);
+
+      // Batch fetch all order items with products in a single query
+      const orderIds = uniqueOrders.map(o => o.id).filter(Boolean);
+      const itemsByOrderId = await storage.getOrderItemsWithProductsForOrders(orderIds);
+
+      // Attach items to their respective orders and serialize decimal fields
+      const ordersWithItems = uniqueOrders.map(order => ({
+        ...order,
+        total: String(order.total), // Serialize order total as string to match frontend contract
+        items: itemsByOrderId[order.id] || [],
+      }));
+
+      res.json(ordersWithItems);
     } catch (error) {
       console.error("Error fetching vendor orders:", error);
       res.status(500).json({ message: "Failed to fetch orders" });
@@ -588,8 +714,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const totalProducts = products.flat().length;
 
       res.json({
-        totalRevenue,
-        totalEarnings,
+        totalRevenue: totalRevenue.toFixed(2), // Serialize as string with 2 decimal places
+        totalEarnings: totalEarnings.toFixed(2), // Serialize as string with 2 decimal places
         totalOrders,
         totalProducts,
         totalStores: stores.length,

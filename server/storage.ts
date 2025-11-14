@@ -31,7 +31,7 @@ import {
   type Payout,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, or, like, gte, lte, desc, asc, count } from "drizzle-orm";
+import { eq, and, or, like, gte, lte, desc, asc, count, inArray } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
@@ -82,6 +82,7 @@ export interface IStorage {
   // Order Item operations
   createOrderItem(item: InsertOrderItem): Promise<OrderItem>;
   getOrderItems(orderId: string): Promise<OrderItem[]>;
+  getOrderItemsWithProductsForOrders(orderIds: string[]): Promise<Record<string, Array<OrderItem & { product: Product | null }>>>;
 
   // Category operations
   createCategory(category: InsertCategory): Promise<Category>;
@@ -382,6 +383,42 @@ export class DatabaseStorage implements IStorage {
 
   async getOrderItems(orderId: string): Promise<OrderItem[]> {
     return await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+  }
+
+  async getOrderItemsWithProductsForOrders(orderIds: string[]): Promise<Record<string, Array<OrderItem & { product: Product | null }>>> {
+    if (orderIds.length === 0) {
+      return {};
+    }
+
+    // Single query to fetch all order items with their products using LEFT JOIN
+    const itemsWithProducts = await db
+      .select({
+        orderItem: orderItems,
+        product: products,
+      })
+      .from(orderItems)
+      .leftJoin(products, eq(orderItems.productId, products.id))
+      .where(inArray(orderItems.orderId, orderIds));
+
+    // Group items by orderId
+    const grouped: Record<string, Array<OrderItem & { product: Product | null }>> = {};
+    
+    for (const row of itemsWithProducts) {
+      const orderId = row.orderItem.orderId;
+      if (!grouped[orderId]) {
+        grouped[orderId] = [];
+      }
+      grouped[orderId].push({
+        ...row.orderItem,
+        price: String(row.orderItem.price), // Serialize price as string to match API contract
+        product: row.product ? {
+          ...row.product,
+          price: String(row.product.price), // Serialize product price as string too
+        } : null,
+      });
+    }
+
+    return grouped;
   }
 
   // Category operations
