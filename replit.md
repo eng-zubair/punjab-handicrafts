@@ -55,11 +55,13 @@ Preferred communication style: Simple, everyday language.
 - Request/response logging middleware for API monitoring
 
 **Authentication System**:
-- Replit Auth integration using OpenID Connect (OIDC) protocol
-- Passport.js strategy for OIDC authentication flow
-- Session management with secure cookies (httpOnly, secure flags)
-- User session data includes claims, access tokens, and refresh tokens
+- Standard username/password authentication using passport-local strategy
+- Password hashing with bcrypt (salt rounds: 12)
+- Session management with express-session and PostgreSQL session store
+- Secure cookies (httpOnly, secure in production, sameSite: lax)
 - Role-based authorization (buyer, vendor, admin) stored in user records
+- Authentication middleware (`isAuthenticated`, `isVendor`, `isAdmin`) for protected routes
+- All auth responses sanitize sensitive fields (passwordHash, verification/reset tokens)
 
 **Data Access Layer**:
 - Storage abstraction pattern in `server/storage.ts` defining IStorage interface

@@ -23,6 +23,8 @@ import { Link, useLocation } from "wouter";
 import { getCartCount } from "@/lib/cart";
 import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/components/ThemeProvider";
+import { AuthDialog } from "@/components/AuthDialog";
+import { useToast } from "@/hooks/use-toast";
 
 const giBrands = [
   "All GI Brands",
@@ -38,12 +40,15 @@ const giBrands = [
 ];
 
 export default function Header() {
-  const { user, isAuthenticated, isVendor, login, logout } = useAuth();
+  const { user, isAuthenticated, isVendor, logout, isLoggingOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const { toast } = useToast();
   const [cartCount, setCartCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedGIBrand, setSelectedGIBrand] = useState("all");
   const [, setLocation] = useLocation();
+  const [authDialogOpen, setAuthDialogOpen] = useState(false);
+  const [authDialogTab, setAuthDialogTab] = useState<"login" | "register">("login");
 
   useEffect(() => {
     setCartCount(getCartCount());
@@ -71,6 +76,34 @@ export default function Header() {
     } else {
       setLocation(`/products?giBrand=${encodeURIComponent(giBrand)}`);
     }
+  };
+
+  const handleLogout = () => {
+    logout(undefined, {
+      onSuccess: () => {
+        toast({
+          title: "Logged out",
+          description: "You have been logged out successfully.",
+        });
+      },
+      onError: (error: any) => {
+        toast({
+          variant: "destructive",
+          title: "Logout failed",
+          description: error?.message || "Failed to logout",
+        });
+      },
+    });
+  };
+
+  const handleLoginClick = () => {
+    setAuthDialogTab("login");
+    setAuthDialogOpen(true);
+  };
+
+  const handleRegisterClick = () => {
+    setAuthDialogTab("register");
+    setAuthDialogOpen(true);
   };
 
 
@@ -187,14 +220,14 @@ export default function Header() {
                       <DropdownMenuSeparator />
                     </>
                   )}
-                  <DropdownMenuItem onClick={logout} data-testid="button-logout">
+                  <DropdownMenuItem onClick={handleLogout} disabled={isLoggingOut} data-testid="button-logout">
                     <LogOut className="w-4 h-4 mr-2" />
-                    <span>Logout</span>
+                    <span>{isLoggingOut ? "Logging out..." : "Logout"}</span>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <Button variant="default" size="sm" onClick={login} data-testid="button-login">
+              <Button variant="default" size="sm" onClick={handleLoginClick} data-testid="button-login">
                 Login
               </Button>
             )}
@@ -238,6 +271,12 @@ export default function Header() {
           </Select>
         </div>
       </div>
+
+      <AuthDialog
+        open={authDialogOpen}
+        onOpenChange={setAuthDialogOpen}
+        defaultTab={authDialogTab}
+      />
     </header>
   );
 }

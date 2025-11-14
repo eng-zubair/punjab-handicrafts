@@ -34,10 +34,15 @@ import { db } from "./db";
 import { eq, and, or, like, gte, lte, desc, asc, count } from "drizzle-orm";
 
 export interface IStorage {
-  // User operations (mandatory for Replit Auth)
+  // User operations
   getUser(id: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
+  createUser(userData: { email: string; passwordHash: string; firstName: string; lastName: string }): Promise<User>;
   upsertUser(user: UpsertUser): Promise<User>;
   updateUserRole(id: string, role: string): Promise<User | undefined>;
+  updatePassword(userId: string, passwordHash: string): Promise<User | undefined>;
+  updateVerificationToken(userId: string, token: string | null): Promise<User | undefined>;
+  updatePasswordResetToken(userId: string, token: string | null, expires: Date | null): Promise<User | undefined>;
 
   // Store operations
   createStore(store: InsertStore): Promise<Store>;
@@ -111,6 +116,25 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+
+  async createUser(userData: { email: string; passwordHash: string; firstName: string; lastName: string }): Promise<User> {
+    const [user] = await db
+      .insert(users)
+      .values({
+        email: userData.email,
+        passwordHash: userData.passwordHash,
+        firstName: userData.firstName,
+        lastName: userData.lastName,
+        role: "buyer",
+      })
+      .returning();
+    return user;
+  }
+
   async upsertUser(userData: UpsertUser): Promise<User> {
     const [user] = await db
       .insert(users)
@@ -131,6 +155,37 @@ export class DatabaseStorage implements IStorage {
       .update(users)
       .set({ role, updatedAt: new Date() })
       .where(eq(users.id, id))
+      .returning();
+    return user;
+  }
+
+  async updatePassword(userId: string, passwordHash: string): Promise<User | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({ passwordHash, updatedAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async updateVerificationToken(userId: string, token: string | null): Promise<User | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({ verificationToken: token, updatedAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async updatePasswordResetToken(userId: string, token: string | null, expires: Date | null): Promise<User | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({ 
+        passwordResetToken: token, 
+        passwordResetExpires: expires,
+        updatedAt: new Date() 
+      })
+      .where(eq(users.id, userId))
       .returning();
     return user;
   }
@@ -227,18 +282,17 @@ export class DatabaseStorage implements IStorage {
       .from(products)
       .where(whereClause);
 
-    let query = db.select().from(products);
-    if (whereClause) {
-      query = query.where(whereClause);
-    }
+    const baseQuery = whereClause 
+      ? db.select().from(products).where(whereClause)
+      : db.select().from(products);
 
     if (filters?.page !== undefined && filters?.pageSize !== undefined) {
       const offset = (filters.page - 1) * filters.pageSize;
-      const productList = await query.limit(filters.pageSize).offset(offset);
+      const productList = await baseQuery.limit(filters.pageSize).offset(offset);
       return { products: productList, total };
     }
 
-    const productList = await query;
+    const productList = await baseQuery;
     
     return { products: productList, total };
   }

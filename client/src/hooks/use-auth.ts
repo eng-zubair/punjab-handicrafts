@@ -1,23 +1,42 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
-import type { User } from "@shared/schema";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import type { User, LoginInput, RegisterInput } from "@shared/schema";
 
 export function useAuth() {
-  const queryClient = useQueryClient();
-
   const { data: user, isLoading } = useQuery<User | null>({
     queryKey: ["/api/auth/user"],
     retry: false,
     staleTime: 5 * 60 * 1000,
   });
 
-  const login = () => {
-    window.location.href = "/api/login";
-  };
+  const loginMutation = useMutation({
+    mutationFn: async (credentials: LoginInput) => {
+      const response = await apiRequest("POST", "/api/auth/login", credentials);
+      return response;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+    },
+  });
 
-  const logout = () => {
-    window.location.href = "/api/logout";
-  };
+  const registerMutation = useMutation({
+    mutationFn: async (data: RegisterInput) => {
+      const response = await apiRequest("POST", "/api/auth/register", data);
+      return response;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+    },
+  });
+
+  const logoutMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/auth/logout", {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+    },
+  });
 
   return {
     user: user ?? null,
@@ -26,7 +45,13 @@ export function useAuth() {
     isVendor: user?.role === "vendor",
     isAdmin: user?.role === "admin",
     isBuyer: user?.role === "buyer",
-    login,
-    logout,
+    login: loginMutation.mutate,
+    register: registerMutation.mutate,
+    logout: logoutMutation.mutate,
+    isLoggingIn: loginMutation.isPending,
+    isRegistering: registerMutation.isPending,
+    isLoggingOut: logoutMutation.isPending,
+    loginError: loginMutation.error,
+    registerError: registerMutation.error,
   };
 }

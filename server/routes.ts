@@ -1,7 +1,8 @@
 import type { Express, RequestHandler } from "express";
 import { createServer, type Server } from "http";
+import passport from "passport";
 import { storage } from "./storage";
-import { setupAuth, isAuthenticated } from "./replitAuth";
+import { setupAuth, isAuthenticated, hashPassword } from "./auth";
 import {
   insertStoreSchema,
   insertProductSchema,
@@ -9,11 +10,20 @@ import {
   insertOrderItemSchema,
   insertMessageSchema,
   insertPayoutSchema,
+  registerSchema,
+  loginSchema,
+  type User,
 } from "@shared/schema";
+
+// Helper function to remove sensitive fields from user objects
+function sanitizeUser(user: User) {
+  const { passwordHash, verificationToken, passwordResetToken, passwordResetExpires, ...safeUser } = user;
+  return safeUser;
+}
 
 const isVendor: RequestHandler = async (req: any, res, next) => {
   try {
-    const userId = req.user?.claims?.sub;
+    const userId = req.userId;
     if (!userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
@@ -21,7 +31,6 @@ const isVendor: RequestHandler = async (req: any, res, next) => {
     if (!user || (user.role !== "vendor" && user.role !== "admin")) {
       return res.status(403).json({ message: "Vendor access required" });
     }
-    req.userId = userId;
     req.userRole = user.role;
     next();
   } catch (error) {
@@ -32,7 +41,7 @@ const isVendor: RequestHandler = async (req: any, res, next) => {
 
 const isAdmin: RequestHandler = async (req: any, res, next) => {
   try {
-    const userId = req.user?.claims?.sub;
+    const userId = req.userId;
     if (!userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
@@ -40,7 +49,6 @@ const isAdmin: RequestHandler = async (req: any, res, next) => {
     if (!user || user.role !== "admin") {
       return res.status(403).json({ message: "Admin access required" });
     }
-    req.userId = userId;
     req.userRole = user.role;
     next();
   } catch (error) {
@@ -50,18 +58,113 @@ const isAdmin: RequestHandler = async (req: any, res, next) => {
 };
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Setup Replit Auth
+  // Setup Authentication
   await setupAuth(app);
 
-  // Auth routes
+  // Authentication routes
+  app.post('/api/auth/register', async (req, res) => {
+    try {
+      const validatedData = registerSchema.parse(req.body);
+      
+      // Check if email already exists
+      const existingUser = await storage.getUserByEmail(validatedData.email);
+      if (existingUser) {
+        return res.status(400).json({ message: "Email already registered" });
+      }
+
+      // Hash password
+      const passwordHash = await hashPassword(validatedData.password);
+
+      // Create user
+      const user = await storage.createUser({
+        email: validatedData.email,
+        passwordHash,
+        firstName: validatedData.firstName,
+        lastName: validatedData.lastName,
+      });
+
+      // Log user in automatically
+      req.login({ userId: user.id }, (err) => {
+        if (err) {
+          console.error("Error logging in after registration:", err);
+          return res.status(500).json({ message: "Registration successful, but login failed" });
+        }
+        
+        // Return user without sensitive fields
+        res.status(201).json(sanitizeUser(user));
+      });
+    } catch (error: any) {
+      console.error("Error registering user:", error);
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid registration data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to register user" });
+    }
+  });
+
+  app.post('/api/auth/login', async (req, res, next) => {
+    try {
+      // Validate request body first
+      const validatedData = loginSchema.parse(req.body);
+      
+      // Replace request body with validated data to prevent injection
+      req.body = validatedData;
+      
+      passport.authenticate('local', (err: any, user: any, info: any) => {
+        if (err) {
+          console.error("Error during login:", err);
+          return res.status(500).json({ message: "Login failed" });
+        }
+        
+        if (!user) {
+          return res.status(401).json({ message: info?.message || "Invalid credentials" });
+        }
+
+        req.login(user, async (loginErr) => {
+          if (loginErr) {
+            console.error("Error establishing session:", loginErr);
+            return res.status(500).json({ message: "Login failed" });
+          }
+
+          // Fetch full user data
+          const fullUser = await storage.getUser(user.userId);
+          if (!fullUser) {
+            return res.status(404).json({ message: "User not found" });
+          }
+
+          // Return user without sensitive fields
+          res.json(sanitizeUser(fullUser));
+        });
+      })(req, res, next);
+    } catch (error: any) {
+      console.error("Error in login route:", error);
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid login data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Login failed" });
+    }
+  });
+
+  app.post('/api/auth/logout', (req, res) => {
+    req.logout((err) => {
+      if (err) {
+        console.error("Error during logout:", err);
+        return res.status(500).json({ message: "Logout failed" });
+      }
+      res.json({ message: "Logged out successfully" });
+    });
+  });
+
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.userId;
       const user = await storage.getUser(userId);
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
-      res.json(user);
+      
+      // Return user without sensitive fields
+      res.json(sanitizeUser(user));
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
@@ -70,7 +173,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/auth/register-vendor', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.userId;
       const user = await storage.getUser(userId);
       
       if (!user) {
@@ -101,7 +204,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const store = await storage.createStore(validatedStoreData);
       const updatedUser = await storage.getUser(userId);
 
-      res.status(201).json({ user: updatedUser, store });
+      // Return user without sensitive fields
+      res.status(201).json({ user: sanitizeUser(updatedUser!), store });
     } catch (error: any) {
       console.error("Error registering vendor:", error);
       if (error.name === 'ZodError') {
