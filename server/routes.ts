@@ -649,8 +649,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/admin/products', isAuthenticated, isAdmin, async (req: any, res) => {
     try {
-      const products = await storage.getAllProducts();
-      res.json(products);
+      const { status } = req.query;
+      const productsResult = await storage.getAllProducts(status ? { status: status as string } : {});
+      res.json(productsResult);
     } catch (error) {
       console.error("Error fetching products:", error);
       res.status(500).json({ message: "Failed to fetch products" });
@@ -687,23 +688,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/admin/analytics', isAuthenticated, isAdmin, async (req: any, res) => {
     try {
-      const [stores, productsResult, orders] = await Promise.all([
+      const [stores, productsResult, orders, users] = await Promise.all([
         storage.getAllStores(),
         storage.getAllProducts({}),
         storage.getAllOrders(),
+        storage.getAllUsers(),
       ]);
 
-      const totalRevenue = orders.reduce((sum, order) => sum + Number(order.total), 0);
+      const totalRevenue = orders.reduce((sum: number, order: any) => sum + Number(order.total), 0);
       
+      const storesByDistrict: { [key: string]: number } = {};
+      stores.forEach((store: any) => {
+        if (store.district) {
+          storesByDistrict[store.district] = (storesByDistrict[store.district] || 0) + 1;
+        }
+      });
+
+      const giBrandCounts: { [key: string]: number } = {};
+      productsResult.products.forEach((product: any) => {
+        if (product.giBrand) {
+          giBrandCounts[product.giBrand] = (giBrandCounts[product.giBrand] || 0) + 1;
+        }
+      });
+      const topGIBrands = Object.entries(giBrandCounts)
+        .map(([brand, count]) => ({ brand, count }))
+        .sort((a, b) => b.count - a.count);
+
       res.json({
+        totalUsers: users.length,
         totalStores: stores.length,
-        activeStores: stores.filter(s => s.status === 'approved').length,
-        pendingStores: stores.filter(s => s.status === 'pending').length,
         totalProducts: productsResult.total,
-        approvedProducts: productsResult.products.filter(p => p.status === 'approved').length,
-        pendingProducts: productsResult.products.filter(p => p.status === 'pending').length,
         totalOrders: orders.length,
         totalRevenue,
+        pendingStores: stores.filter((s: any) => s.status === 'pending').length,
+        pendingProducts: productsResult.products.filter((p: any) => p.status === 'pending').length,
+        storesByDistrict,
+        topGIBrands,
       });
     } catch (error) {
       console.error("Error fetching admin analytics:", error);

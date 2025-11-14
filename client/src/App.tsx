@@ -13,6 +13,11 @@ import VendorOverview from "@/pages/vendor/Overview";
 import VendorProducts from "@/pages/vendor/Products";
 import VendorOrders from "@/pages/vendor/Orders";
 import VendorStore from "@/pages/vendor/Store";
+import AdminOverview from "@/pages/admin/Overview";
+import AdminModeration from "@/pages/admin/Moderation";
+import AdminUsers from "@/pages/admin/Users";
+import AdminOrders from "@/pages/admin/Orders";
+import AdminAnalytics from "@/pages/admin/Analytics";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -27,6 +32,11 @@ function Router() {
       <Route path="/vendor/products" component={VendorProducts} />
       <Route path="/vendor/orders" component={VendorOrders} />
       <Route path="/vendor/store" component={VendorStore} />
+      <Route path="/admin/dashboard" component={AdminOverview} />
+      <Route path="/admin/moderation" component={AdminModeration} />
+      <Route path="/admin/users" component={AdminUsers} />
+      <Route path="/admin/orders" component={AdminOrders} />
+      <Route path="/admin/analytics" component={AdminAnalytics} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Search, ShoppingCart, User, Menu, Moon, Sun, Store, LayoutDashboard, LogOut } from "lucide-react";
+import { Search, ShoppingCart, User, Menu, Moon, Sun, Store, LayoutDashboard, LogOut, ShieldCheck } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { getCartCount } from "@/lib/cart";
@@ -41,6 +41,7 @@ const giBrands = [
 
 export default function Header() {
   const { user, isAuthenticated, isVendor, logout, isLoggingOut } = useAuth();
+  const isAdmin = user?.role === "admin";
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
   const [cartCount, setCartCount] = useState(0);
@@ -209,6 +210,17 @@ export default function Header() {
                     </div>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
+                  {isAdmin && (
+                    <>
+                      <DropdownMenuItem asChild>
+                        <Link href="/admin/dashboard">
+                          <ShieldCheck className="w-4 h-4 mr-2" />
+                          <span data-testid="link-admin-dashboard">Admin Dashboard</span>
+                        </Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
                   {isVendor && (
                     <>
                       <DropdownMenuItem asChild>
