@@ -1,9 +1,20 @@
 import { useState } from "react";
-import { useQuery } from "@tantml:parameter>
-<parameter name="search_paths">[]
+import { useQuery } from "@tanstack/react-query";
+import type { Category, Product } from "@shared/schema";
+import Header from "@/components/Header";
+import Footer from "@/components/Footer";
+import ProductCard from "@/components/ProductCard";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { SlidersHorizontal, X, Search, AlertCircle } from "lucide-react";
 import bahawalpurImage from '@assets/generated_images/Bahawalpur_Ralli_quilts_display_07a38e65.png';
 import lahoreImage from '@assets/generated_images/Lahore_jewelry_and_embroidery_39a642f1.png';
 import khussaImage from '@assets/generated_images/Handmade_khussa_footwear_product_06baa0d0.png';
+import multanImage from '@assets/generated_images/Multan_blue_pottery_workshop_21555b73.png';
 
 const imagePathMap: Record<string, string> = {
   "/attached_assets/generated_images/Lahore_jewelry_and_embroidery_39a642f1.png": lahoreImage,
