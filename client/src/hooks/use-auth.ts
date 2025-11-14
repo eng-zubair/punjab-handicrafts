@@ -34,6 +34,9 @@ export function useAuth() {
       await apiRequest("POST", "/api/auth/logout", {});
     },
     onSuccess: () => {
+      // Immediately clear the user data
+      queryClient.setQueryData(["/api/auth/user"], null);
+      // Then invalidate to ensure fresh data on next fetch
       queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
     },
   });
