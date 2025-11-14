@@ -33,6 +33,20 @@ import {
 import { db } from "./db";
 import { eq, and, or, like, gte, lte, desc, asc, count, inArray } from "drizzle-orm";
 
+// Utility function to normalize image paths to start with /
+function normalizeImagePath(path: string): string {
+  if (!path) return path;
+  return path.startsWith('/') ? path : `/${path}`;
+}
+
+// Utility function to normalize product image arrays
+function normalizeProductImages(product: Product): Product {
+  return {
+    ...product,
+    images: product.images ? product.images.map(normalizeImagePath) : []
+  };
+}
+
 export interface IStorage {
   // User operations
   getUser(id: string): Promise<User | undefined>;
@@ -239,16 +253,17 @@ export class DatabaseStorage implements IStorage {
   // Product operations
   async createProduct(product: InsertProduct): Promise<Product> {
     const [newProduct] = await db.insert(products).values(product).returning();
-    return newProduct;
+    return normalizeProductImages(newProduct);
   }
 
   async getProduct(id: string): Promise<Product | undefined> {
     const [product] = await db.select().from(products).where(eq(products.id, id));
-    return product;
+    return product ? normalizeProductImages(product) : undefined;
   }
 
   async getProductsByStore(storeId: string): Promise<Product[]> {
-    return await db.select().from(products).where(eq(products.storeId, storeId));
+    const result = await db.select().from(products).where(eq(products.storeId, storeId));
+    return result.map(normalizeProductImages);
   }
 
   async getAllProducts(filters?: {
@@ -295,12 +310,12 @@ export class DatabaseStorage implements IStorage {
     if (filters?.page !== undefined && filters?.pageSize !== undefined) {
       const offset = (filters.page - 1) * filters.pageSize;
       const productList = await baseQuery.limit(filters.pageSize).offset(offset);
-      return { products: productList, total };
+      return { products: productList.map(normalizeProductImages), total };
     }
 
     const productList = await baseQuery;
     
-    return { products: productList, total };
+    return { products: productList.map(normalizeProductImages), total };
   }
 
   async updateProduct(id: string, updates: Partial<InsertProduct>): Promise<Product | undefined> {
@@ -309,7 +324,7 @@ export class DatabaseStorage implements IStorage {
       .set(updates)
       .where(eq(products.id, id))
       .returning();
-    return product;
+    return product ? normalizeProductImages(product) : undefined;
   }
 
   async updateProductStatus(id: string, status: string): Promise<Product | undefined> {
@@ -318,7 +333,7 @@ export class DatabaseStorage implements IStorage {
       .set({ status })
       .where(eq(products.id, id))
       .returning();
-    return product;
+    return product ? normalizeProductImages(product) : undefined;
   }
 
   async deleteProduct(id: string): Promise<void> {
@@ -408,13 +423,13 @@ export class DatabaseStorage implements IStorage {
       if (!grouped[orderId]) {
         grouped[orderId] = [];
       }
+      // Normalize product images first, keep price numeric (routes handle serialization)
+      const normalizedProduct = row.product ? normalizeProductImages(row.product) : null;
+      
       grouped[orderId].push({
         ...row.orderItem,
         price: String(row.orderItem.price), // Serialize price as string to match API contract
-        product: row.product ? {
-          ...row.product,
-          price: String(row.product.price), // Serialize product price as string too
-        } : null,
+        product: normalizedProduct,
       });
     }
 

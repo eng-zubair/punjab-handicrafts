@@ -1,19 +1,6 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import type { Product, Category } from "@shared/schema";
-import Header from "@/components/Header";
-import Footer from "@/components/Footer";
-import ProductCard from "@/components/ProductCard";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
-import { Search, SlidersHorizontal, X } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertCircle } from "lucide-react";
-
-import multanImage from '@assets/generated_images/Multan_blue_pottery_workshop_21555b73.png';
+import { useQuery } from "@tantml:parameter>
+<parameter name="search_paths">[]
 import bahawalpurImage from '@assets/generated_images/Bahawalpur_Ralli_quilts_display_07a38e65.png';
 import lahoreImage from '@assets/generated_images/Lahore_jewelry_and_embroidery_39a642f1.png';
 import khussaImage from '@assets/generated_images/Handmade_khussa_footwear_product_06baa0d0.png';
@@ -69,17 +56,20 @@ export default function Products() {
 
   const hasActiveFilters = search || district !== 'all' || giBrand !== 'all' || priceRange[0] > 0 || priceRange[1] < 10000;
 
-  const featuredProducts = productsData?.products.map(product => ({
-    id: product.id,
-    title: product.title,
-    price: Number(product.price),
-    image: imagePathMap[product.images[0]] || product.images[0] || multanImage,
-    district: product.district,
-    giBrand: product.giBrand,
-    vendorName: "Artisan Vendor",
-    storeId: product.storeId,
-    stock: product.stock,
-  })) || [];
+  const featuredProducts = productsData?.products.map(product => {
+    const normalizedImage = product.images[0] ? (product.images[0].startsWith('/') ? product.images[0] : `/${product.images[0]}`) : '';
+    return {
+      id: product.id,
+      title: product.title,
+      price: Number(product.price),
+      image: imagePathMap[normalizedImage] || normalizedImage || multanImage,
+      district: product.district,
+      giBrand: product.giBrand,
+      vendorName: "Artisan Vendor",
+      storeId: product.storeId,
+      stock: product.stock,
+    };
+  }) || [];
 
   const giBrands = categoriesData?.map(cat => cat.giBrand) || [];
 

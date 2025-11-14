@@ -11,6 +11,7 @@ import type { Product } from "@shared/schema";
 import { addToCart } from "@/lib/cart";
 import { useToast } from "@/hooks/use-toast";
 import { formatPrice, toSafeNumber } from "@/lib/utils/price";
+import { normalizeImagePaths } from "@/lib/utils/image";
 
 type Store = {
   id: string;
@@ -59,7 +60,7 @@ export default function ProductDetail() {
       productId: product.id,
       title: product.title,
       price: product.price,
-      image: product.images[0] || '',
+      image: images[0] || '',
       district: product.district,
       giBrand: product.giBrand,
       storeId: product.storeId,
@@ -87,7 +88,7 @@ export default function ProductDetail() {
       productId: product.id,
       title: product.title,
       price: product.price,
-      image: product.images[0] || '',
+      image: images[0] || '',
       district: product.district,
       giBrand: product.giBrand,
       storeId: product.storeId,
@@ -165,7 +166,7 @@ export default function ProductDetail() {
   }
 
   const isOutOfStock = product.stock === 0;
-  const images = product.images || [];
+  const images = normalizeImagePaths(product.images);
 
   return (
     <div className="container mx-auto px-4 py-8">

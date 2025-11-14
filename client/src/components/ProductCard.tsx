@@ -8,6 +8,7 @@ import { useLocation } from "wouter";
 import { addToCart } from "@/lib/cart";
 import { useToast } from "@/hooks/use-toast";
 import { formatPrice } from "@/lib/utils/price";
+import { normalizeImagePath } from "@/lib/utils/image";
 
 interface ProductCardProps {
   id: string;
@@ -49,7 +50,7 @@ export default function ProductCard({
       productId: id,
       title,
       price: priceStr,
-      image,
+      image: normalizeImagePath(image),
       district,
       giBrand,
       storeId,
@@ -74,7 +75,7 @@ export default function ProductCard({
       <CardHeader className="p-0">
         <div className="relative aspect-[4/3] overflow-hidden bg-muted">
           <img
-            src={image}
+            src={normalizeImagePath(image)}
             alt={title}
             className="w-full h-full object-cover transition-transform duration-300"
             style={{ transform: isHovered ? 'scale(1.05)' : 'scale(1)' }}

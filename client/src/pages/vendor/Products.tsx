@@ -38,6 +38,7 @@ import { z } from "zod";
 import { useState } from "react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { normalizeImagePath } from "@/lib/utils/image";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -452,7 +453,7 @@ export default function VendorProducts() {
                     {uploadedImages.map((img, index) => (
                       <div key={index} className="relative w-20 h-20 rounded border">
                         <img 
-                          src={img} 
+                          src={normalizeImagePath(img)} 
                           alt={`Product ${index + 1}`}
                           className="w-full h-full object-cover rounded"
                         />
@@ -603,7 +604,7 @@ export default function VendorProducts() {
                     <div className="aspect-square relative bg-muted">
                       {product.images[0] && (
                         <img
-                          src={product.images[0]}
+                          src={normalizeImagePath(product.images[0])}
                           alt={product.title}
                           className="w-full h-full object-cover"
                           data-testid={`img-product-${product.id}`}

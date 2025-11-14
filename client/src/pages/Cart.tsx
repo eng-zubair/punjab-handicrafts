@@ -16,6 +16,8 @@ import { useState, useEffect, useMemo } from "react";
 import { ShoppingBag, ArrowLeft, Plus, Minus, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { CartItem } from "@/lib/cart";
+import { normalizeImagePath } from "@/lib/utils/image";
+import { formatPrice } from "@/lib/utils/price";
 
 export default function Cart() {
   const [, setLocation] = useLocation();
@@ -144,7 +146,7 @@ export default function Cart() {
                   <div className="w-24 h-24 rounded-md overflow-hidden bg-muted flex-shrink-0">
                     {item.image ? (
                       <img
-                        src={item.image}
+                        src={normalizeImagePath(item.image)}
                         alt={item.title}
                         className="w-full h-full object-cover"
                         data-testid={`img-cart-item-${item.productId}`}

@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ShoppingCart, Package, User } from "lucide-react";
 import { useState } from "react";
 import { formatPrice, toSafeNumber } from "@/lib/utils/price";
+import { normalizeImagePath } from "@/lib/utils/image";
 
 type OrderItem = {
   id: string;
@@ -159,7 +160,7 @@ export default function VendorOrders() {
                               >
                                 {item.product?.images?.[0] && (
                                   <img
-                                    src={item.product.images[0]}
+                                    src={normalizeImagePath(item.product.images[0])}
                                     alt={item.product.title}
                                     className="w-12 h-12 object-cover rounded"
                                   />

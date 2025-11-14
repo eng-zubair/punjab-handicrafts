@@ -25,6 +25,14 @@ function sanitizeUser(user: User) {
   return safeUser;
 }
 
+// Helper function to serialize product prices to strings for API responses
+function serializeProduct<T extends { price: number | string }>(product: T): T & { price: string } {
+  return {
+    ...product,
+    price: String(product.price),
+  };
+}
+
 const isVendor: RequestHandler = async (req: any, res, next) => {
   try {
     const userId = req.userId;
@@ -345,10 +353,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { products, total } = await storage.getAllProducts(filters);
       
+      // Serialize product prices to strings for API response
+      const serializedProducts = products.map(serializeProduct);
+      
       if (filters.page && filters.pageSize) {
         const totalPages = Math.ceil(total / filters.pageSize);
         res.json({
-          products,
+          products: serializedProducts,
           pagination: {
             page: filters.page,
             pageSize: filters.pageSize,
@@ -357,7 +368,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         });
       } else {
-        res.json({ products, pagination: { total } });
+        res.json({ products: serializedProducts, pagination: { total } });
       }
     } catch (error) {
       console.error("Error fetching products:", error);
@@ -371,7 +382,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!product) {
         return res.status(404).json({ message: "Product not found" });
       }
-      res.json(product);
+      res.json(serializeProduct(product));
     } catch (error) {
       console.error("Error fetching product:", error);
       res.status(500).json({ message: "Failed to fetch product" });
@@ -483,7 +494,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const validatedData = insertProductSchema.parse({ storeId, ...productData });
       const product = await storage.createProduct(validatedData);
-      res.status(201).json(product);
+      res.status(201).json(serializeProduct(product));
     } catch (error: any) {
       console.error("Error creating product:", error);
       if (error.name === 'ZodError') {
@@ -509,7 +520,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { storeId, ...sanitizedUpdates } = insertProductSchema.partial().parse(req.body);
       const updatedProduct = await storage.updateProduct(productId, sanitizedUpdates);
-      res.json(updatedProduct);
+      if (!updatedProduct) {
+        return res.status(404).json({ message: "Product not found after update" });
+      }
+      res.json(serializeProduct(updatedProduct));
     } catch (error: any) {
       console.error("Error updating product:", error);
       if (error.name === 'ZodError') {
@@ -548,7 +562,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         stores.map(store => storage.getProductsByStore(store.id))
       );
       const products = allProducts.flat();
-      res.json(products);
+      res.json(products.map(serializeProduct));
     } catch (error) {
       console.error("Error fetching vendor products:", error);
       res.status(500).json({ message: "Failed to fetch products" });
@@ -684,7 +698,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const ordersWithItems = uniqueOrders.map(order => ({
         ...order,
         total: String(order.total), // Serialize order total as string to match frontend contract
-        items: itemsByOrderId[order.id] || [],
+        items: (itemsByOrderId[order.id] || []).map(item => ({
+          ...item,
+          product: item.product ? serializeProduct(item.product) : null,
+        })),
       }));
 
       res.json(ordersWithItems);
@@ -777,7 +794,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { status } = req.query;
       const productsResult = await storage.getAllProducts(status ? { status: status as string } : {});
-      res.json(productsResult);
+      // Serialize product prices to strings for API response
+      const serializedResult = {
+        ...productsResult,
+        products: productsResult.products.map(serializeProduct)
+      };
+      res.json(serializedResult);
     } catch (error) {
       console.error("Error fetching products:", error);
       res.status(500).json({ message: "Failed to fetch products" });

@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Check, X, Store, Package } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { normalizeImagePath } from "@/lib/utils/image";
 
 interface PendingStore {
   id: string;
@@ -240,7 +241,7 @@ export default function AdminModeration() {
                           {product.images.slice(0, 3).map((image, index) => (
                             <img
                               key={index}
-                              src={image}
+                              src={normalizeImagePath(image)}
                               alt={`${product.title} ${index + 1}`}
                               className="w-24 h-24 object-cover rounded-md border"
                               data-testid={`img-product-${product.id}-${index}`}
