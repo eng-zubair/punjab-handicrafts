@@ -5,14 +5,19 @@ import { log } from "./vite";
 const SALT_ROUNDS = 12;
 
 export async function initializeDefaultAdmin() {
-  const adminEmail = process.env.ADMIN_EMAIL || "admin@sanatzar.pk";
-  const adminPassword = process.env.ADMIN_PASSWORD || "Admin123!";
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const adminPassword = process.env.ADMIN_PASSWORD;
+
+  if (!adminEmail || !adminPassword) {
+    log(`⚠ Admin credentials not configured. Set ADMIN_EMAIL and ADMIN_PASSWORD environment variables.`);
+    return;
+  }
 
   try {
     const existingAdmin = await storage.getUserByEmail(adminEmail);
 
     if (existingAdmin) {
-      log(`Default admin already exists: ${adminEmail}`);
+      log(`✓ Default admin account verified`);
       return;
     }
 
@@ -27,11 +32,9 @@ export async function initializeDefaultAdmin() {
 
     await storage.updateUserRole(adminUser.id, "admin");
 
-    log(`✓ Default admin created successfully`);
-    log(`  Email: ${adminEmail}`);
-    log(`  Password: ${adminPassword}`);
-    log(`  Note: Change these credentials in production!`);
+    log(`✓ Default admin account created successfully`);
+    log(`  Note: Please change the default admin password after first login`);
   } catch (error) {
-    log(`Error initializing default admin: ${error}`);
+    log(`✗ Error initializing default admin: ${error}`);
   }
 }
