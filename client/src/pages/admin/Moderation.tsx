@@ -45,10 +45,14 @@ export default function AdminModeration() {
 
   const { data: pendingStores, isLoading: isLoadingStores } = useQuery<PendingStore[]>({
     queryKey: ['/api/admin/stores?status=pending'],
+    refetchOnMount: true,
+    staleTime: 0,
   });
 
   const { data: productsData, isLoading: isLoadingProducts } = useQuery<ProductsResponse>({
     queryKey: ['/api/admin/products?status=pending'],
+    refetchOnMount: true,
+    staleTime: 0,
   });
 
   const updateStoreMutation = useMutation({
