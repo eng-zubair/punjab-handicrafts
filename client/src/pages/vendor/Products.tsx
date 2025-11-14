@@ -519,7 +519,10 @@ export default function VendorProducts() {
             <h1 className="text-3xl font-bold" data-testid="heading-products">Products</h1>
             <p className="text-muted-foreground">Manage your product catalog</p>
           </div>
-          <Dialog open={addDialogOpen} onOpenChange={(open) => !open && handleDialogClose('add')}>
+          <Dialog open={addDialogOpen} onOpenChange={(open) => {
+            setAddDialogOpen(open);
+            if (!open) handleDialogClose('add');
+          }}>
             <DialogTrigger asChild>
               <Button data-testid="button-add-product">
                 <Plus className="w-4 h-4 mr-2" />
@@ -666,7 +669,10 @@ export default function VendorProducts() {
         </Tabs>
 
         {/* Edit Dialog */}
-        <Dialog open={editDialogOpen} onOpenChange={(open) => !open && handleDialogClose('edit')}>
+        <Dialog open={editDialogOpen} onOpenChange={(open) => {
+          setEditDialogOpen(open);
+          if (!open) handleDialogClose('edit');
+        }}>
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Edit Product</DialogTitle>
