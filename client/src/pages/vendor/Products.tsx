@@ -108,10 +108,11 @@ export default function VendorProducts() {
     queryKey: ['/api/categories'],
   });
 
-  const { data: allProducts = [], isLoading } = useQuery<Product[]>({
+  const { data: productsData, isLoading } = useQuery<{ products: Product[]; pagination: { total: number } }>({
     queryKey: ['/api/products'],
   });
 
+  const allProducts = productsData?.products || [];
   const store = stores[0];
   const vendorProducts = allProducts.filter(p => p.storeId === store?.id);
   
