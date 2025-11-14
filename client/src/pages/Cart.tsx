@@ -1,14 +1,27 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { getCart } from "@/lib/cart";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { getCart, updateCartItemQuantity, removeFromCart, clearCart } from "@/lib/cart";
 import { useLocation } from "wouter";
 import { useState, useEffect, useMemo } from "react";
-import { ShoppingBag, ArrowLeft } from "lucide-react";
+import { ShoppingBag, ArrowLeft, Plus, Minus, Trash2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import type { CartItem } from "@/lib/cart";
 
 export default function Cart() {
   const [, setLocation] = useLocation();
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [showClearDialog, setShowClearDialog] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     setCartItems(getCart());
@@ -26,6 +39,43 @@ export default function Cart() {
       return sum + (parseFloat(item.price) * item.quantity);
     }, 0);
   }, [cartItems]);
+
+  const handleIncreaseQuantity = (item: CartItem) => {
+    if (item.quantity >= item.stock) {
+      toast({
+        variant: "destructive",
+        title: "Stock limit reached",
+        description: `Only ${item.stock} units available for ${item.title}.`,
+      });
+      return;
+    }
+    updateCartItemQuantity(item.productId, item.quantity + 1);
+  };
+
+  const handleDecreaseQuantity = (item: CartItem) => {
+    if (item.quantity > 1) {
+      updateCartItemQuantity(item.productId, item.quantity - 1);
+    } else {
+      handleRemoveItem(item);
+    }
+  };
+
+  const handleRemoveItem = (item: CartItem) => {
+    removeFromCart(item.productId);
+    toast({
+      title: "Item removed",
+      description: `${item.title} has been removed from your cart.`,
+    });
+  };
+
+  const handleClearCart = () => {
+    setShowClearDialog(false);
+    clearCart();
+    toast({
+      title: "Cart cleared",
+      description: "All items have been removed from your cart.",
+    });
+  };
 
   if (cartItems.length === 0) {
     return (
@@ -72,9 +122,20 @@ export default function Cart() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-4">
-          <h1 className="text-3xl font-bold mb-6" data-testid="text-cart-heading">
-            Shopping Cart ({cartItems.length} {cartItems.length === 1 ? 'item' : 'items'})
-          </h1>
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-3xl font-bold" data-testid="text-cart-heading">
+              Shopping Cart ({cartItems.length} {cartItems.length === 1 ? 'item' : 'items'})
+            </h1>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => setShowClearDialog(true)}
+              data-testid="button-clear-cart"
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Clear Cart
+            </Button>
+          </div>
 
           {cartItems.map((item) => (
             <Card key={item.productId} data-testid={`cart-item-${item.productId}`}>
@@ -96,17 +157,59 @@ export default function Cart() {
                   </div>
 
                   <div className="flex-1 space-y-2">
-                    <h3 className="font-semibold text-lg" data-testid={`text-cart-item-title-${item.productId}`}>
-                      {item.title}
-                    </h3>
-                    <p className="text-sm text-muted-foreground" data-testid={`text-cart-item-store-${item.productId}`}>
-                      by {item.storeName}
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">
-                        Quantity: <span data-testid={`text-cart-item-quantity-${item.productId}`}>{item.quantity}</span>
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-lg" data-testid={`text-cart-item-title-${item.productId}`}>
+                          {item.title}
+                        </h3>
+                        <p className="text-sm text-muted-foreground" data-testid={`text-cart-item-store-${item.productId}`}>
+                          by {item.storeName}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleRemoveItem(item)}
+                        data-testid={`button-remove-item-${item.productId}`}
+                      >
+                        <Trash2 className="w-4 h-4 text-destructive" />
+                      </Button>
+                    </div>
+                    
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-muted-foreground">Quantity:</span>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => handleDecreaseQuantity(item)}
+                          data-testid={`button-decrease-qty-${item.productId}`}
+                          className="h-8 w-8"
+                        >
+                          <Minus className="w-3 h-3" />
+                        </Button>
+                        <span 
+                          className="w-12 text-center font-semibold" 
+                          data-testid={`text-cart-item-quantity-${item.productId}`}
+                        >
+                          {item.quantity}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => handleIncreaseQuantity(item)}
+                          data-testid={`button-increase-qty-${item.productId}`}
+                          className="h-8 w-8"
+                          disabled={item.quantity >= item.stock}
+                        >
+                          <Plus className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        ({item.stock} in stock)
                       </span>
                     </div>
+                    
                     <p className="text-lg font-bold text-primary" data-testid={`text-cart-item-price-${item.productId}`}>
                       PKR {(parseFloat(item.price) * item.quantity).toLocaleString()}
                     </p>
@@ -146,12 +249,27 @@ export default function Cart() {
               </Button>
             </CardFooter>
           </Card>
-
-          <p className="text-sm text-muted-foreground text-center mt-4">
-            Full cart management coming in next update
-          </p>
         </div>
       </div>
+
+      <AlertDialog open={showClearDialog} onOpenChange={setShowClearDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear your cart?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove all {cartItems.length} {cartItems.length === 1 ? 'item' : 'items'} from your cart. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setShowClearDialog(false)} data-testid="button-cancel-clear">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleClearCart} data-testid="button-confirm-clear">
+              Clear Cart
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
