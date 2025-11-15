@@ -109,13 +109,11 @@ export default function VendorProducts() {
     queryKey: ['/api/categories'],
   });
 
-  const { data: productsData, isLoading } = useQuery<{ products: Product[]; pagination: { total: number } }>({
-    queryKey: ['/api/products'],
+  const { data: vendorProducts = [], isLoading } = useQuery<Product[]>({
+    queryKey: ['/api/vendor/products'],
   });
 
-  const allProducts = productsData?.products || [];
   const store = stores[0];
-  const vendorProducts = allProducts.filter(p => p.storeId === store?.id);
   
   const filteredProducts = vendorProducts.filter(p => {
     if (activeTab === "all") return true;
@@ -154,7 +152,7 @@ export default function VendorProducts() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/products'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/products'] });
       queryClient.invalidateQueries({ queryKey: ['/api/vendor/analytics'] });
       setAddDialogOpen(false);
       addForm.reset();
@@ -186,7 +184,7 @@ export default function VendorProducts() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/products'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/products'] });
       setEditDialogOpen(false);
       setSelectedProduct(null);
       setUploadedImages([]);
@@ -209,7 +207,7 @@ export default function VendorProducts() {
       return apiRequest('DELETE', `/api/products/${id}`, {});
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/products'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/products'] });
       queryClient.invalidateQueries({ queryKey: ['/api/vendor/analytics'] });
       setDeleteDialogOpen(false);
       setSelectedProduct(null);

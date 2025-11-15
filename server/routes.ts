@@ -338,11 +338,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Product browsing routes
-  app.get('/api/products', async (req, res) => {
+  app.get('/api/products', async (req: any, res) => {
     try {
-      const { district, giBrand, minPrice, maxPrice, search, status = 'approved', page, pageSize } = req.query;
+      const { district, giBrand, minPrice, maxPrice, search, status, page, pageSize } = req.query;
       
-      const filters: any = { status };
+      const filters: any = {};
+      
+      // Status filtering with strict role-based access control
+      const userId = req.userId;
+      let userRole: string | null = null;
+      
+      if (userId) {
+        const user = await storage.getUser(userId);
+        userRole = user?.role || null;
+      }
+      
+      // Whitelist of valid status values
+      const validStatuses = ['pending', 'approved', 'rejected', 'all'];
+      
+      // Only admins can request non-approved products or 'all' products
+      // Vendors should use /api/vendor/products to see their own products with any status
+      // Regular users and unauthenticated users can only see approved products
+      if (userRole === 'admin' && status && validStatuses.includes(status as string)) {
+        // Admins can filter by specific status or request 'all'
+        if (status !== 'all') {
+          filters.status = status as string;
+        }
+        // If status is 'all', don't add status filter (show everything)
+      } else {
+        // Everyone else (buyers, vendors via this endpoint, unauthenticated) only sees approved
+        filters.status = 'approved';
+      }
+      
       if (district) filters.district = district as string;
       if (giBrand) filters.giBrand = giBrand as string;
       if (minPrice) filters.minPrice = Number(minPrice);
