@@ -148,7 +148,7 @@ export default function VendorProducts() {
       return apiRequest('POST', '/api/products', {
         ...data,
         storeId: store.id,
-        price: parseFloat(data.price),
+        price: data.price,
         stock: parseInt(data.stock),
         images: uploadedImages,
       });
@@ -180,7 +180,7 @@ export default function VendorProducts() {
       const images = uploadedImages.length > 0 ? uploadedImages : selectedProduct?.images || [];
       return apiRequest('PUT', `/api/products/${id}`, {
         ...updateData,
-        price: parseFloat(updateData.price),
+        price: updateData.price,
         stock: parseInt(updateData.stock),
         images,
       });
