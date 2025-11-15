@@ -13,6 +13,7 @@ import { normalizeImagePath } from "@/lib/utils/image";
 interface ProductCardProps {
   id: string;
   title: string;
+  description?: string;
   price: number | string;
   image: string;
   district: string;
@@ -25,6 +26,7 @@ interface ProductCardProps {
 export default function ProductCard({
   id,
   title,
+  description,
   price,
   image,
   district,
@@ -93,6 +95,11 @@ export default function ProductCard({
         <p className="text-sm text-muted-foreground" data-testid={`text-vendor-${id}`}>
           by {vendorName}
         </p>
+        {description && (
+          <p className="text-sm text-muted-foreground/80 line-clamp-2" data-testid={`text-description-${id}`}>
+            {description}
+          </p>
+        )}
         <p className="text-2xl font-bold text-primary" data-testid={`text-price-${id}`}>
           {formatPrice(price)}
         </p>

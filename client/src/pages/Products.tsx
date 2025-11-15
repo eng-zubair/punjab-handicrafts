@@ -77,6 +77,7 @@ export default function Products() {
     return {
       id: product.id,
       title: product.title,
+      description: product.description || undefined,
       price: Number(product.price),
       image: imagePathMap[normalizedImage] || normalizedImage || multanImage,
       district: product.district,

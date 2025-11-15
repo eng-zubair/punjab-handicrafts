@@ -59,6 +59,7 @@ export default function Home() {
   const featuredProducts = productsResponse?.products.slice(0, 4).map(product => ({
     id: product.id,
     title: product.title,
+    description: product.description || undefined,
     price: Number(product.price),
     image: imagePathMap[product.images[0]] || product.images[0] || multanImage,
     district: product.district,

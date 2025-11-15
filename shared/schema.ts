@@ -55,6 +55,7 @@ export const products = pgTable("products", {
   giBrand: text("gi_brand").notNull(),
   variants: text("variants"),
   status: text("status").notNull().default("pending"),
+  isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -123,6 +124,45 @@ export const payouts = pgTable("payouts", {
   processedAt: timestamp("processed_at"),
 });
 
+export const productGroups = pgTable("product_groups", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  storeId: varchar("store_id").notNull().references(() => stores.id),
+  name: text("name").notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const productGroupMembers = pgTable("product_group_members", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  groupId: varchar("group_id").notNull().references(() => productGroups.id, { onDelete: 'cascade' }),
+  productId: varchar("product_id").notNull().references(() => products.id, { onDelete: 'cascade' }),
+  position: integer("position").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const promotions = pgTable("promotions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  storeId: varchar("store_id").notNull().references(() => stores.id),
+  name: text("name").notNull(),
+  description: text("description"),
+  type: text("type").notNull(),
+  value: decimal("value", { precision: 10, scale: 2 }).notNull(),
+  minQuantity: integer("min_quantity").default(1),
+  appliesTo: text("applies_to").notNull(),
+  targetId: varchar("target_id"),
+  startAt: timestamp("start_at"),
+  endAt: timestamp("end_at"),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const promotionProducts = pgTable("promotion_products", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  promotionId: varchar("promotion_id").notNull().references(() => promotions.id, { onDelete: 'cascade' }),
+  productId: varchar("product_id").notNull().references(() => products.id, { onDelete: 'cascade' }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const upsertUserSchema = createInsertSchema(users).omit({
   createdAt: true,
   updatedAt: true,
@@ -144,6 +184,7 @@ export const insertProductSchema = createInsertSchema(products).omit({
   id: true,
   createdAt: true,
   status: true,
+  isActive: true,
 });
 
 export const insertOrderSchema = createInsertSchema(orders).omit({
@@ -180,6 +221,26 @@ export const insertPayoutSchema = createInsertSchema(payouts).omit({
   requestedAt: true,
 });
 
+export const insertProductGroupSchema = createInsertSchema(productGroups).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertProductGroupMemberSchema = createInsertSchema(productGroupMembers).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertPromotionSchema = createInsertSchema(promotions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertPromotionProductSchema = createInsertSchema(promotionProducts).omit({
+  id: true,
+  createdAt: true,
+});
+
 export type UpsertUser = z.infer<typeof upsertUserSchema>;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -210,6 +271,18 @@ export type Transaction = typeof transactions.$inferSelect;
 
 export type InsertPayout = z.infer<typeof insertPayoutSchema>;
 export type Payout = typeof payouts.$inferSelect;
+
+export type InsertProductGroup = z.infer<typeof insertProductGroupSchema>;
+export type ProductGroup = typeof productGroups.$inferSelect;
+
+export type InsertProductGroupMember = z.infer<typeof insertProductGroupMemberSchema>;
+export type ProductGroupMember = typeof productGroupMembers.$inferSelect;
+
+export type InsertPromotion = z.infer<typeof insertPromotionSchema>;
+export type Promotion = typeof promotions.$inferSelect;
+
+export type InsertPromotionProduct = z.infer<typeof insertPromotionProductSchema>;
+export type PromotionProduct = typeof promotionProducts.$inferSelect;
 
 // Authentication schemas with password validation
 export const registerSchema = z.object({

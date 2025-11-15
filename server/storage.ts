@@ -9,6 +9,10 @@ import {
   subscriptions,
   transactions,
   payouts,
+  productGroups,
+  productGroupMembers,
+  promotions,
+  promotionProducts,
   type User,
   type UpsertUser,
   type InsertStore,
@@ -29,6 +33,14 @@ import {
   type Transaction,
   type InsertPayout,
   type Payout,
+  type InsertProductGroup,
+  type ProductGroup,
+  type InsertProductGroupMember,
+  type ProductGroupMember,
+  type InsertPromotion,
+  type Promotion,
+  type InsertPromotionProduct,
+  type PromotionProduct,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, or, like, gte, lte, desc, asc, count, inArray } from "drizzle-orm";
@@ -83,7 +95,28 @@ export interface IStorage {
   }): Promise<{ products: Product[], total: number }>;
   updateProduct(id: string, updates: Partial<InsertProduct>): Promise<Product | undefined>;
   updateProductStatus(id: string, status: string): Promise<Product | undefined>;
+  updateProductActiveStatus(id: string, isActive: boolean): Promise<Product | undefined>;
   deleteProduct(id: string): Promise<void>;
+
+  // Product Group operations
+  createProductGroup(group: InsertProductGroup): Promise<ProductGroup>;
+  getProductGroup(id: string): Promise<ProductGroup | undefined>;
+  getProductGroupsByStore(storeId: string): Promise<ProductGroup[]>;
+  updateProductGroup(id: string, updates: Partial<InsertProductGroup>): Promise<ProductGroup | undefined>;
+  deleteProductGroup(id: string): Promise<void>;
+  addProductToGroup(groupId: string, productId: string, position?: number): Promise<ProductGroupMember>;
+  removeProductFromGroup(groupId: string, productId: string): Promise<void>;
+  getProductGroupMembers(groupId: string): Promise<ProductGroupMember[]>;
+
+  // Promotion operations
+  createPromotion(promotion: InsertPromotion): Promise<Promotion>;
+  getPromotion(id: string): Promise<Promotion | undefined>;
+  getPromotionsByStore(storeId: string): Promise<Promotion[]>;
+  updatePromotion(id: string, updates: Partial<InsertPromotion>): Promise<Promotion | undefined>;
+  deletePromotion(id: string): Promise<void>;
+  addProductToPromotion(promotionId: string, productId: string): Promise<PromotionProduct>;
+  removeProductFromPromotion(promotionId: string, productId: string): Promise<void>;
+  getPromotionProducts(promotionId: string): Promise<PromotionProduct[]>;
 
   // Order operations
   createOrder(order: InsertOrder): Promise<Order>;
@@ -338,6 +371,128 @@ export class DatabaseStorage implements IStorage {
 
   async deleteProduct(id: string): Promise<void> {
     await db.delete(products).where(eq(products.id, id));
+  }
+
+  async updateProductActiveStatus(id: string, isActive: boolean): Promise<Product | undefined> {
+    const [product] = await db
+      .update(products)
+      .set({ isActive })
+      .where(eq(products.id, id))
+      .returning();
+    return product ? normalizeProductImages(product) : undefined;
+  }
+
+  // Product Group operations
+  async createProductGroup(group: InsertProductGroup): Promise<ProductGroup> {
+    const [newGroup] = await db.insert(productGroups).values(group).returning();
+    return newGroup;
+  }
+
+  async getProductGroup(id: string): Promise<ProductGroup | undefined> {
+    const [group] = await db.select().from(productGroups).where(eq(productGroups.id, id));
+    return group;
+  }
+
+  async getProductGroupsByStore(storeId: string): Promise<ProductGroup[]> {
+    return await db
+      .select()
+      .from(productGroups)
+      .where(eq(productGroups.storeId, storeId))
+      .orderBy(desc(productGroups.createdAt));
+  }
+
+  async updateProductGroup(id: string, updates: Partial<InsertProductGroup>): Promise<ProductGroup | undefined> {
+    const [group] = await db
+      .update(productGroups)
+      .set(updates)
+      .where(eq(productGroups.id, id))
+      .returning();
+    return group;
+  }
+
+  async deleteProductGroup(id: string): Promise<void> {
+    await db.delete(productGroups).where(eq(productGroups.id, id));
+  }
+
+  async addProductToGroup(groupId: string, productId: string, position: number = 0): Promise<ProductGroupMember> {
+    const [member] = await db
+      .insert(productGroupMembers)
+      .values({ groupId, productId, position })
+      .returning();
+    return member;
+  }
+
+  async removeProductFromGroup(groupId: string, productId: string): Promise<void> {
+    await db
+      .delete(productGroupMembers)
+      .where(and(
+        eq(productGroupMembers.groupId, groupId),
+        eq(productGroupMembers.productId, productId)
+      ));
+  }
+
+  async getProductGroupMembers(groupId: string): Promise<ProductGroupMember[]> {
+    return await db
+      .select()
+      .from(productGroupMembers)
+      .where(eq(productGroupMembers.groupId, groupId))
+      .orderBy(asc(productGroupMembers.position));
+  }
+
+  // Promotion operations
+  async createPromotion(promotion: InsertPromotion): Promise<Promotion> {
+    const [newPromotion] = await db.insert(promotions).values(promotion).returning();
+    return newPromotion;
+  }
+
+  async getPromotion(id: string): Promise<Promotion | undefined> {
+    const [promotion] = await db.select().from(promotions).where(eq(promotions.id, id));
+    return promotion;
+  }
+
+  async getPromotionsByStore(storeId: string): Promise<Promotion[]> {
+    return await db
+      .select()
+      .from(promotions)
+      .where(eq(promotions.storeId, storeId))
+      .orderBy(desc(promotions.createdAt));
+  }
+
+  async updatePromotion(id: string, updates: Partial<InsertPromotion>): Promise<Promotion | undefined> {
+    const [promotion] = await db
+      .update(promotions)
+      .set(updates)
+      .where(eq(promotions.id, id))
+      .returning();
+    return promotion;
+  }
+
+  async deletePromotion(id: string): Promise<void> {
+    await db.delete(promotions).where(eq(promotions.id, id));
+  }
+
+  async addProductToPromotion(promotionId: string, productId: string): Promise<PromotionProduct> {
+    const [promotionProduct] = await db
+      .insert(promotionProducts)
+      .values({ promotionId, productId })
+      .returning();
+    return promotionProduct;
+  }
+
+  async removeProductFromPromotion(promotionId: string, productId: string): Promise<void> {
+    await db
+      .delete(promotionProducts)
+      .where(and(
+        eq(promotionProducts.promotionId, promotionId),
+        eq(promotionProducts.productId, productId)
+      ));
+  }
+
+  async getPromotionProducts(promotionId: string): Promise<PromotionProduct[]> {
+    return await db
+      .select()
+      .from(promotionProducts)
+      .where(eq(promotionProducts.promotionId, promotionId));
   }
 
   // Order operations

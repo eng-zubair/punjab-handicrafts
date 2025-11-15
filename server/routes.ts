@@ -14,6 +14,8 @@ import {
   insertOrderItemSchema,
   insertMessageSchema,
   insertPayoutSchema,
+  insertProductGroupSchema,
+  insertPromotionSchema,
   registerSchema,
   loginSchema,
   type User,
@@ -593,6 +595,348 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching vendor products:", error);
       res.status(500).json({ message: "Failed to fetch products" });
+    }
+  });
+
+  app.patch('/api/vendor/products/:id', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const productId = req.params.id;
+      const existingProduct = await storage.getProduct(productId);
+      
+      if (!existingProduct) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+
+      const store = await storage.getStore(existingProduct.storeId);
+      if (!store || store.vendorId !== req.userId) {
+        return res.status(403).json({ message: "Not authorized to edit this product" });
+      }
+
+      const { storeId, ...updateFields } = req.body;
+      if (storeId !== undefined) {
+        return res.status(400).json({ message: "Cannot change product store" });
+      }
+
+      const validatedData = insertProductSchema.partial().parse(updateFields);
+      const updatedProduct = await storage.updateProduct(productId, validatedData);
+      res.json(serializeProduct(updatedProduct!));
+    } catch (error: any) {
+      console.error("Error updating product:", error);
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid product data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update product" });
+    }
+  });
+
+  app.delete('/api/vendor/products/:id', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const productId = req.params.id;
+      const existingProduct = await storage.getProduct(productId);
+      
+      if (!existingProduct) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+
+      const store = await storage.getStore(existingProduct.storeId);
+      if (!store || store.vendorId !== req.userId) {
+        return res.status(403).json({ message: "Not authorized to delete this product" });
+      }
+
+      await storage.deleteProduct(productId);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting product:", error);
+      res.status(500).json({ message: "Failed to delete product" });
+    }
+  });
+
+  app.patch('/api/vendor/products/:id/toggle-active', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const productId = req.params.id;
+      const { isActive } = req.body;
+      
+      if (typeof isActive !== 'boolean') {
+        return res.status(400).json({ message: "isActive must be a boolean" });
+      }
+
+      const existingProduct = await storage.getProduct(productId);
+      if (!existingProduct) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+
+      const store = await storage.getStore(existingProduct.storeId);
+      if (!store || store.vendorId !== req.userId) {
+        return res.status(403).json({ message: "Not authorized to modify this product" });
+      }
+
+      const updatedProduct = await storage.updateProductActiveStatus(productId, isActive);
+      res.json(serializeProduct(updatedProduct!));
+    } catch (error) {
+      console.error("Error toggling product active status:", error);
+      res.status(500).json({ message: "Failed to toggle product status" });
+    }
+  });
+
+  // Product Group Management Routes
+  app.get('/api/vendor/groups', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const stores = await storage.getStoresByVendor(req.userId);
+      const allGroups = await Promise.all(
+        stores.map(store => storage.getProductGroupsByStore(store.id))
+      );
+      const groups = allGroups.flat();
+      res.json(groups);
+    } catch (error) {
+      console.error("Error fetching product groups:", error);
+      res.status(500).json({ message: "Failed to fetch product groups" });
+    }
+  });
+
+  app.post('/api/vendor/groups', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const stores = await storage.getStoresByVendor(req.userId);
+      if (stores.length === 0) {
+        return res.status(400).json({ message: "Vendor must have a store to create product groups" });
+      }
+
+      const validatedData = insertProductGroupSchema.parse({
+        ...req.body,
+        storeId: req.body.storeId || stores[0].id,
+      });
+
+      const store = await storage.getStore(validatedData.storeId);
+      if (!store || store.vendorId !== req.userId) {
+        return res.status(403).json({ message: "Not authorized to create groups for this store" });
+      }
+
+      const group = await storage.createProductGroup(validatedData);
+      res.status(201).json(group);
+    } catch (error: any) {
+      console.error("Error creating product group:", error);
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid group data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create product group" });
+    }
+  });
+
+  app.patch('/api/vendor/groups/:id', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const groupId = req.params.id;
+      const existingGroup = await storage.getProductGroup(groupId);
+      
+      if (!existingGroup) {
+        return res.status(404).json({ message: "Product group not found" });
+      }
+
+      const store = await storage.getStore(existingGroup.storeId);
+      if (!store || store.vendorId !== req.userId) {
+        return res.status(403).json({ message: "Not authorized to edit this group" });
+      }
+
+      const validatedData = insertProductGroupSchema.partial().parse(req.body);
+      const updatedGroup = await storage.updateProductGroup(groupId, validatedData);
+      res.json(updatedGroup);
+    } catch (error: any) {
+      console.error("Error updating product group:", error);
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid group data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update product group" });
+    }
+  });
+
+  app.delete('/api/vendor/groups/:id', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const groupId = req.params.id;
+      const existingGroup = await storage.getProductGroup(groupId);
+      
+      if (!existingGroup) {
+        return res.status(404).json({ message: "Product group not found" });
+      }
+
+      const store = await storage.getStore(existingGroup.storeId);
+      if (!store || store.vendorId !== req.userId) {
+        return res.status(403).json({ message: "Not authorized to delete this group" });
+      }
+
+      await storage.deleteProductGroup(groupId);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting product group:", error);
+      res.status(500).json({ message: "Failed to delete product group" });
+    }
+  });
+
+  app.post('/api/vendor/groups/:id/products', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const groupId = req.params.id;
+      const { productId, position } = req.body;
+
+      const group = await storage.getProductGroup(groupId);
+      if (!group) {
+        return res.status(404).json({ message: "Product group not found" });
+      }
+
+      const store = await storage.getStore(group.storeId);
+      if (!store || store.vendorId !== req.userId) {
+        return res.status(403).json({ message: "Not authorized to modify this group" });
+      }
+
+      const product = await storage.getProduct(productId);
+      if (!product || product.storeId !== group.storeId) {
+        return res.status(400).json({ message: "Product not found or doesn't belong to the same store" });
+      }
+
+      const member = await storage.addProductToGroup(groupId, productId, position || 0);
+      res.status(201).json(member);
+    } catch (error) {
+      console.error("Error adding product to group:", error);
+      res.status(500).json({ message: "Failed to add product to group" });
+    }
+  });
+
+  app.delete('/api/vendor/groups/:groupId/products/:productId', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const { groupId, productId } = req.params;
+
+      const group = await storage.getProductGroup(groupId);
+      if (!group) {
+        return res.status(404).json({ message: "Product group not found" });
+      }
+
+      const store = await storage.getStore(group.storeId);
+      if (!store || store.vendorId !== req.userId) {
+        return res.status(403).json({ message: "Not authorized to modify this group" });
+      }
+
+      await storage.removeProductFromGroup(groupId, productId);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error removing product from group:", error);
+      res.status(500).json({ message: "Failed to remove product from group" });
+    }
+  });
+
+  // Promotion Management Routes
+  app.get('/api/vendor/promotions', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const stores = await storage.getStoresByVendor(req.userId);
+      const allPromotions = await Promise.all(
+        stores.map(store => storage.getPromotionsByStore(store.id))
+      );
+      const promotions = allPromotions.flat();
+      res.json(promotions);
+    } catch (error) {
+      console.error("Error fetching promotions:", error);
+      res.status(500).json({ message: "Failed to fetch promotions" });
+    }
+  });
+
+  app.post('/api/vendor/promotions', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const stores = await storage.getStoresByVendor(req.userId);
+      if (stores.length === 0) {
+        return res.status(400).json({ message: "Vendor must have a store to create promotions" });
+      }
+
+      const validatedData = insertPromotionSchema.parse({
+        ...req.body,
+        storeId: req.body.storeId || stores[0].id,
+      });
+
+      const store = await storage.getStore(validatedData.storeId);
+      if (!store || store.vendorId !== req.userId) {
+        return res.status(403).json({ message: "Not authorized to create promotions for this store" });
+      }
+
+      if (validatedData.targetId) {
+        if (validatedData.appliesTo === 'product') {
+          const product = await storage.getProduct(validatedData.targetId);
+          if (!product || product.storeId !== validatedData.storeId) {
+            return res.status(400).json({ message: "Product not found or doesn't belong to your store" });
+          }
+        } else if (validatedData.appliesTo === 'group') {
+          const group = await storage.getProductGroup(validatedData.targetId);
+          if (!group || group.storeId !== validatedData.storeId) {
+            return res.status(400).json({ message: "Product group not found or doesn't belong to your store" });
+          }
+        }
+      }
+
+      const promotion = await storage.createPromotion(validatedData);
+      res.status(201).json(promotion);
+    } catch (error: any) {
+      console.error("Error creating promotion:", error);
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid promotion data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create promotion" });
+    }
+  });
+
+  app.patch('/api/vendor/promotions/:id', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const promotionId = req.params.id;
+      const existingPromotion = await storage.getPromotion(promotionId);
+      
+      if (!existingPromotion) {
+        return res.status(404).json({ message: "Promotion not found" });
+      }
+
+      const store = await storage.getStore(existingPromotion.storeId);
+      if (!store || store.vendorId !== req.userId) {
+        return res.status(403).json({ message: "Not authorized to edit this promotion" });
+      }
+
+      const validatedData = insertPromotionSchema.partial().parse(req.body);
+      
+      if (validatedData.targetId !== undefined && validatedData.targetId !== null) {
+        const appliesTo = validatedData.appliesTo || existingPromotion.appliesTo;
+        if (appliesTo === 'product') {
+          const product = await storage.getProduct(validatedData.targetId);
+          if (!product || product.storeId !== existingPromotion.storeId) {
+            return res.status(400).json({ message: "Product not found or doesn't belong to your store" });
+          }
+        } else if (appliesTo === 'group') {
+          const group = await storage.getProductGroup(validatedData.targetId);
+          if (!group || group.storeId !== existingPromotion.storeId) {
+            return res.status(400).json({ message: "Product group not found or doesn't belong to your store" });
+          }
+        }
+      }
+
+      const updatedPromotion = await storage.updatePromotion(promotionId, validatedData);
+      res.json(updatedPromotion);
+    } catch (error: any) {
+      console.error("Error updating promotion:", error);
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid promotion data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update promotion" });
+    }
+  });
+
+  app.delete('/api/vendor/promotions/:id', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const promotionId = req.params.id;
+      const existingPromotion = await storage.getPromotion(promotionId);
+      
+      if (!existingPromotion) {
+        return res.status(404).json({ message: "Promotion not found" });
+      }
+
+      const store = await storage.getStore(existingPromotion.storeId);
+      if (!store || store.vendorId !== req.userId) {
+        return res.status(403).json({ message: "Not authorized to delete this promotion" });
+      }
+
+      await storage.deletePromotion(promotionId);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting promotion:", error);
+      res.status(500).json({ message: "Failed to delete promotion" });
     }
   });
 
