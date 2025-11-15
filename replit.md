@@ -69,6 +69,18 @@ Preferred communication style: Simple, everyday language.
 - Role-based access control with middleware guards (isVendor, isAdmin)
 - Request/response logging middleware for API monitoring
 
+**Vendor Product Management API** (added November 15, 2025):
+- `PATCH /api/vendor/products/:id` - Edit product (immutable storeId, ownership verified)
+- `DELETE /api/vendor/products/:id` - Delete product (cascade removes from groups/promotions)
+- `PATCH /api/vendor/products/:id/toggle-active` - Activate/deactivate product visibility
+- `GET/POST /api/vendor/groups` - Product grouping CRUD
+- `PATCH/DELETE /api/vendor/groups/:id` - Update/delete product groups
+- `POST /api/vendor/groups/:id/products` - Add products to group (ownership verified)
+- `DELETE /api/vendor/groups/:groupId/products/:productId` - Remove from group
+- `GET/POST /api/vendor/promotions` - Promotion CRUD with scheduling
+- `PATCH/DELETE /api/vendor/promotions/:id` - Update/delete promotions
+- All routes enforce store ownership via vendorId, validate targetId authorization for promotions, and prevent storeId tampering
+
 **Authentication System**:
 - Standard username/password authentication using passport-local strategy
 - Password hashing with bcrypt (salt rounds: 12)
@@ -94,7 +106,11 @@ Preferred communication style: Simple, everyday language.
 - **users**: Authentication and role management (buyer/vendor/admin)
 - **sessions**: Express session storage for Replit Auth
 - **stores**: Vendor store information with district and GI brand associations
-- **products**: Product catalog with pricing, stock, images, and GI certification
+- **products**: Product catalog with pricing, stock, images, GI certification, and isActive flag
+- **product_groups**: Vendor-created collections of related products per store (added Nov 15, 2025)
+- **product_group_members**: Junction table for products in groups with ordering (added Nov 15, 2025)
+- **promotions**: Store promotions with types (percentage/fixed/BOGO), scheduling, and targeting (added Nov 15, 2025)
+- **promotion_products**: Junction table linking promotions to eligible products (added Nov 15, 2025)
 - **categories**: Craft category taxonomy
 - **orders**: Order records with status tracking
 - **orderItems**: Line items for each order
