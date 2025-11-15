@@ -1,7 +1,7 @@
 import { VendorDashboard } from "./VendorDashboard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2, Package as PackageIcon, Power } from "lucide-react";
+import { Plus, Pencil, Trash2, Package as PackageIcon, Power, Layers, Tag, Calendar } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,6 +13,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import { format } from "date-fns";
 import {
   Dialog,
   DialogContent,
@@ -82,6 +86,30 @@ type Product = {
   createdAt: string;
 };
 
+type ProductGroup = {
+  id: string;
+  storeId: string;
+  name: string;
+  description: string | null;
+  createdAt: string;
+};
+
+type Promotion = {
+  id: string;
+  storeId: string;
+  name: string;
+  description: string | null;
+  type: 'percentage' | 'fixed' | 'buy-one-get-one';
+  value: string;
+  minQuantity: number | null;
+  appliesTo: 'all' | 'product' | 'group';
+  targetId: string | null;
+  startAt: string | null;
+  endAt: string | null;
+  status: 'active' | 'scheduled' | 'expired';
+  createdAt: string;
+};
+
 type Category = {
   id: string;
   district: string;
@@ -99,10 +127,30 @@ const productFormSchema = z.object({
   images: z.string().optional(), // Will store uploaded image paths as JSON string
 });
 
+const groupFormSchema = z.object({
+  name: z.string().min(3, "Name must be at least 3 characters"),
+  description: z.string().min(10, "Description must be at least 10 characters"),
+});
+
+const promotionFormSchema = z.object({
+  name: z.string().min(3, "Name must be at least 3 characters"),
+  description: z.string().optional(),
+  type: z.enum(['percentage', 'fixed', 'buy-one-get-one']),
+  value: z.string().refine((val) => !isNaN(Number(val)) && Number(val) > 0, "Value must be a positive number"),
+  minQuantity: z.string().optional(),
+  appliesTo: z.enum(['all', 'product', 'group']),
+  targetId: z.string().optional(),
+  startAt: z.date().optional(),
+  endAt: z.date().optional(),
+});
+
 type ProductFormValues = z.infer<typeof productFormSchema>;
+type GroupFormValues = z.infer<typeof groupFormSchema>;
+type PromotionFormValues = z.infer<typeof promotionFormSchema>;
 
 export default function VendorProducts() {
   const { toast } = useToast();
+  const [mainTab, setMainTab] = useState("products");
   const [activeTab, setActiveTab] = useState("all");
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -110,6 +158,16 @@ export default function VendorProducts() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  const [editGroupDialogOpen, setEditGroupDialogOpen] = useState(false);
+  const [deleteGroupDialogOpen, setDeleteGroupDialogOpen] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<ProductGroup | null>(null);
+
+  const [promotionDialogOpen, setPromotionDialogOpen] = useState(false);
+  const [editPromotionDialogOpen, setEditPromotionDialogOpen] = useState(false);
+  const [deletePromotionDialogOpen, setDeletePromotionDialogOpen] = useState(false);
+  const [selectedPromotion, setSelectedPromotion] = useState<Promotion | null>(null);
 
   const { data: stores = [] } = useQuery<Store[]>({
     queryKey: ['/api/vendor/stores'],
@@ -121,6 +179,14 @@ export default function VendorProducts() {
 
   const { data: vendorProducts = [], isLoading } = useQuery<Product[]>({
     queryKey: ['/api/vendor/products'],
+  });
+
+  const { data: productGroups = [], isLoading: groupsLoading } = useQuery<ProductGroup[]>({
+    queryKey: ['/api/vendor/groups'],
+  });
+
+  const { data: promotions = [], isLoading: promotionsLoading } = useQuery<Promotion[]>({
+    queryKey: ['/api/vendor/promotions'],
   });
 
   const store = stores[0];
@@ -145,6 +211,33 @@ export default function VendorProducts() {
 
   const editForm = useForm<ProductFormValues>({
     resolver: zodResolver(productFormSchema),
+  });
+
+  const groupForm = useForm<GroupFormValues>({
+    resolver: zodResolver(groupFormSchema),
+    defaultValues: {
+      name: "",
+      description: "",
+    },
+  });
+
+  const editGroupForm = useForm<GroupFormValues>({
+    resolver: zodResolver(groupFormSchema),
+  });
+
+  const promotionForm = useForm<PromotionFormValues>({
+    resolver: zodResolver(promotionFormSchema),
+    defaultValues: {
+      name: "",
+      description: "",
+      type: "percentage",
+      value: "",
+      appliesTo: "all",
+    },
+  });
+
+  const editPromotionForm = useForm<PromotionFormValues>({
+    resolver: zodResolver(promotionFormSchema),
   });
 
   const addProductMutation = useMutation({
@@ -244,6 +337,162 @@ export default function VendorProducts() {
       toast({
         title: "Product updated",
         description: "Product visibility has been toggled",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const createGroupMutation = useMutation({
+    mutationFn: async (data: GroupFormValues) => {
+      return apiRequest('POST', '/api/vendor/groups', data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/groups'] });
+      setGroupDialogOpen(false);
+      groupForm.reset();
+      toast({
+        title: "Group created",
+        description: "Product group has been created successfully",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateGroupMutation = useMutation({
+    mutationFn: async (data: GroupFormValues & { id: string }) => {
+      const { id, ...updateData } = data;
+      return apiRequest('PATCH', `/api/vendor/groups/${id}`, updateData);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/groups'] });
+      setEditGroupDialogOpen(false);
+      setSelectedGroup(null);
+      toast({
+        title: "Group updated",
+        description: "Product group has been updated successfully",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteGroupMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return apiRequest('DELETE', `/api/vendor/groups/${id}`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/groups'] });
+      setDeleteGroupDialogOpen(false);
+      setSelectedGroup(null);
+      toast({
+        title: "Group deleted",
+        description: "Product group has been removed",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const createPromotionMutation = useMutation({
+    mutationFn: async (data: PromotionFormValues) => {
+      const payload = {
+        name: data.name,
+        description: data.description || null,
+        type: data.type,
+        value: data.value,
+        minQuantity: data.minQuantity ? parseInt(data.minQuantity) : null,
+        appliesTo: data.appliesTo,
+        targetId: data.targetId || null,
+        startAt: data.startAt ? data.startAt.toISOString() : null,
+        endAt: data.endAt ? data.endAt.toISOString() : null,
+      };
+      return apiRequest('POST', '/api/vendor/promotions', payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/promotions'] });
+      setPromotionDialogOpen(false);
+      promotionForm.reset();
+      toast({
+        title: "Promotion created",
+        description: "Promotion has been created successfully",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updatePromotionMutation = useMutation({
+    mutationFn: async (data: PromotionFormValues & { id: string }) => {
+      const { id, ...updateData } = data;
+      const payload = {
+        name: updateData.name,
+        description: updateData.description || null,
+        type: updateData.type,
+        value: updateData.value,
+        minQuantity: updateData.minQuantity ? parseInt(updateData.minQuantity) : null,
+        appliesTo: updateData.appliesTo,
+        targetId: updateData.targetId || null,
+        startAt: updateData.startAt ? updateData.startAt.toISOString() : null,
+        endAt: updateData.endAt ? updateData.endAt.toISOString() : null,
+      };
+      return apiRequest('PATCH', `/api/vendor/promotions/${id}`, payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/promotions'] });
+      setEditPromotionDialogOpen(false);
+      setSelectedPromotion(null);
+      toast({
+        title: "Promotion updated",
+        description: "Promotion has been updated successfully",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deletePromotionMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return apiRequest('DELETE', `/api/vendor/promotions/${id}`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/promotions'] });
+      setDeletePromotionDialogOpen(false);
+      setSelectedPromotion(null);
+      toast({
+        title: "Promotion deleted",
+        description: "Promotion has been removed",
       });
     },
     onError: (error: Error) => {
@@ -545,19 +794,20 @@ export default function VendorProducts() {
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold" data-testid="heading-products">Products</h1>
-            <p className="text-muted-foreground">Manage your product catalog</p>
+            <h1 className="text-3xl font-bold" data-testid="heading-products">Products & Promotions</h1>
+            <p className="text-muted-foreground">Manage your catalog, groups, and promotions</p>
           </div>
-          <Dialog open={addDialogOpen} onOpenChange={(open) => {
-            setAddDialogOpen(open);
-            if (!open) handleDialogClose('add');
-          }}>
-            <DialogTrigger asChild>
-              <Button data-testid="button-add-product">
-                <Plus className="w-4 h-4 mr-2" />
-                Add Product
-              </Button>
-            </DialogTrigger>
+          {mainTab === "products" && (
+            <Dialog open={addDialogOpen} onOpenChange={(open) => {
+              setAddDialogOpen(open);
+              if (!open) handleDialogClose('add');
+            }}>
+              <DialogTrigger asChild>
+                <Button data-testid="button-add-product">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Product
+                </Button>
+              </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Add New Product</DialogTitle>
@@ -584,10 +834,40 @@ export default function VendorProducts() {
                 </form>
               </Form>
             </DialogContent>
-          </Dialog>
+            </Dialog>
+          )}
+          {mainTab === "groups" && (
+            <Button onClick={() => setGroupDialogOpen(true)} data-testid="button-add-group">
+              <Plus className="w-4 h-4 mr-2" />
+              Create Group
+            </Button>
+          )}
+          {mainTab === "promotions" && (
+            <Button onClick={() => setPromotionDialogOpen(true)} data-testid="button-add-promotion">
+              <Plus className="w-4 h-4 mr-2" />
+              Create Promotion
+            </Button>
+          )}
         </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <Tabs value={mainTab} onValueChange={setMainTab}>
+          <TabsList>
+            <TabsTrigger value="products" data-testid="tab-main-products">
+              <PackageIcon className="w-4 h-4 mr-2" />
+              Products
+            </TabsTrigger>
+            <TabsTrigger value="groups" data-testid="tab-main-groups">
+              <Layers className="w-4 h-4 mr-2" />
+              Groups
+            </TabsTrigger>
+            <TabsTrigger value="promotions" data-testid="tab-main-promotions">
+              <Tag className="w-4 h-4 mr-2" />
+              Promotions
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="products" className="mt-6">
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
             <TabsTrigger value="all" data-testid="tab-all-products">
               All ({vendorProducts.length})
@@ -713,6 +993,176 @@ export default function VendorProducts() {
               </Card>
             )}
           </TabsContent>
+            </Tabs>
+          </TabsContent>
+
+          <TabsContent value="groups" className="mt-6">
+            {groupsLoading ? (
+              <p className="text-muted-foreground">Loading groups...</p>
+            ) : productGroups.length === 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Layers className="w-5 h-5" />
+                    No Product Groups
+                  </CardTitle>
+                  <CardDescription>You haven't created any product groups yet</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground">
+                    Click "Create Group" to organize your products into collections.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Created</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {productGroups.map((group) => (
+                      <TableRow key={group.id} data-testid={`row-group-${group.id}`}>
+                        <TableCell className="font-medium" data-testid={`text-group-name-${group.id}`}>
+                          {group.name}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {group.description}
+                        </TableCell>
+                        <TableCell>{new Date(group.createdAt).toLocaleDateString()}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setSelectedGroup(group);
+                                editGroupForm.reset({ name: group.name, description: group.description || "" });
+                                setEditGroupDialogOpen(true);
+                              }}
+                              data-testid={`button-edit-group-${group.id}`}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => {
+                                setSelectedGroup(group);
+                                setDeleteGroupDialogOpen(true);
+                              }}
+                              data-testid={`button-delete-group-${group.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Card>
+            )}
+          </TabsContent>
+
+          <TabsContent value="promotions" className="mt-6">
+            {promotionsLoading ? (
+              <p className="text-muted-foreground">Loading promotions...</p>
+            ) : promotions.length === 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Tag className="w-5 h-5" />
+                    No Promotions
+                  </CardTitle>
+                  <CardDescription>You haven't created any promotions yet</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground">
+                    Click "Create Promotion" to add discounts and deals to your products.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Value</TableHead>
+                      <TableHead>Applies To</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {promotions.map((promo) => (
+                      <TableRow key={promo.id} data-testid={`row-promotion-${promo.id}`}>
+                        <TableCell className="font-medium" data-testid={`text-promotion-name-${promo.id}`}>
+                          {promo.name}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">
+                            {promo.type === 'percentage' ? 'Percentage' : promo.type === 'fixed' ? 'Fixed' : 'BOGO'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{promo.type === 'percentage' ? `${promo.value}%` : `PKR ${promo.value}`}</TableCell>
+                        <TableCell className="capitalize">{promo.appliesTo}</TableCell>
+                        <TableCell>
+                          <Badge variant={promo.status === 'active' ? 'default' : 'secondary'}>
+                            {promo.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setSelectedPromotion(promo);
+                                editPromotionForm.reset({
+                                  name: promo.name,
+                                  description: promo.description || "",
+                                  type: promo.type,
+                                  value: promo.value,
+                                  minQuantity: promo.minQuantity?.toString() || "",
+                                  appliesTo: promo.appliesTo,
+                                  targetId: promo.targetId || "",
+                                  startAt: promo.startAt ? new Date(promo.startAt) : undefined,
+                                  endAt: promo.endAt ? new Date(promo.endAt) : undefined,
+                                });
+                                setEditPromotionDialogOpen(true);
+                              }}
+                              data-testid={`button-edit-promotion-${promo.id}`}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => {
+                                setSelectedPromotion(promo);
+                                setDeletePromotionDialogOpen(true);
+                              }}
+                              data-testid={`button-delete-promotion-${promo.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Card>
+            )}
+          </TabsContent>
         </Tabs>
 
         {/* Edit Dialog */}
@@ -753,7 +1203,7 @@ export default function VendorProducts() {
           </DialogContent>
         </Dialog>
 
-        {/* Delete Confirmation Dialog */}
+        {/* Delete Product Confirmation Dialog */}
         <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
@@ -770,6 +1220,360 @@ export default function VendorProducts() {
                 data-testid="button-confirm-delete"
               >
                 {deleteProductMutation.isPending ? "Deleting..." : "Delete"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Create Group Dialog */}
+        <Dialog open={groupDialogOpen} onOpenChange={setGroupDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Create Product Group</DialogTitle>
+              <DialogDescription>Create a collection of related products</DialogDescription>
+            </DialogHeader>
+            <Form {...groupForm}>
+              <form onSubmit={groupForm.handleSubmit((data) => createGroupMutation.mutate(data))} className="space-y-4">
+                <FormField
+                  control={groupForm.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Group Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Summer Collection" {...field} data-testid="input-group-name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={groupForm.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Description</FormLabel>
+                      <FormControl>
+                        <Textarea placeholder="Describe this product group..." {...field} data-testid="input-group-description" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setGroupDialogOpen(false)} data-testid="button-cancel-group">
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={createGroupMutation.isPending} data-testid="button-submit-group">
+                    {createGroupMutation.isPending ? "Creating..." : "Create Group"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </Form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit Group Dialog */}
+        <Dialog open={editGroupDialogOpen} onOpenChange={setEditGroupDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit Product Group</DialogTitle>
+              <DialogDescription>Update group details</DialogDescription>
+            </DialogHeader>
+            <Form {...editGroupForm}>
+              <form onSubmit={editGroupForm.handleSubmit((data) => selectedGroup && updateGroupMutation.mutate({ ...data, id: selectedGroup.id }))} className="space-y-4">
+                <FormField
+                  control={editGroupForm.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Group Name</FormLabel>
+                      <FormControl>
+                        <Input {...field} data-testid="input-edit-group-name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={editGroupForm.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Description</FormLabel>
+                      <FormControl>
+                        <Textarea {...field} data-testid="input-edit-group-description" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setEditGroupDialogOpen(false)} data-testid="button-cancel-edit-group">
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={updateGroupMutation.isPending} data-testid="button-submit-edit-group">
+                    {updateGroupMutation.isPending ? "Updating..." : "Update Group"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </Form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete Group Confirmation */}
+        <AlertDialog open={deleteGroupDialogOpen} onOpenChange={setDeleteGroupDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Group</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete "{selectedGroup?.name}"? This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel data-testid="button-cancel-delete-group">Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => selectedGroup && deleteGroupMutation.mutate(selectedGroup.id)}
+                className="bg-destructive text-destructive-foreground hover-elevate active-elevate-2"
+                data-testid="button-confirm-delete-group"
+              >
+                {deleteGroupMutation.isPending ? "Deleting..." : "Delete"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Create Promotion Dialog */}
+        <Dialog open={promotionDialogOpen} onOpenChange={setPromotionDialogOpen}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Create Promotion</DialogTitle>
+              <DialogDescription>Create a discount or deal for your products</DialogDescription>
+            </DialogHeader>
+            <Form {...promotionForm}>
+              <form onSubmit={promotionForm.handleSubmit((data) => createPromotionMutation.mutate(data))} className="space-y-4">
+                <FormField
+                  control={promotionForm.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Promotion Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Summer Sale" {...field} data-testid="input-promotion-name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={promotionForm.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Description (Optional)</FormLabel>
+                      <FormControl>
+                        <Textarea placeholder="Describe this promotion..." {...field} data-testid="input-promotion-description" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={promotionForm.control}
+                    name="type"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Type</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger data-testid="select-promotion-type">
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="percentage">Percentage Off</SelectItem>
+                            <SelectItem value="fixed">Fixed Amount Off</SelectItem>
+                            <SelectItem value="buy-one-get-one">Buy One Get One</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={promotionForm.control}
+                    name="value"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Value</FormLabel>
+                        <FormControl>
+                          <Input type="number" placeholder="20" {...field} data-testid="input-promotion-value" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={promotionForm.control}
+                  name="appliesTo"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Applies To</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-promotion-applies-to">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="all">All Products</SelectItem>
+                          <SelectItem value="product">Specific Product</SelectItem>
+                          <SelectItem value="group">Product Group</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setPromotionDialogOpen(false)} data-testid="button-cancel-promotion">
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={createPromotionMutation.isPending} data-testid="button-submit-promotion">
+                    {createPromotionMutation.isPending ? "Creating..." : "Create Promotion"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </Form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit Promotion Dialog */}
+        <Dialog open={editPromotionDialogOpen} onOpenChange={setEditPromotionDialogOpen}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Edit Promotion</DialogTitle>
+              <DialogDescription>Update promotion details</DialogDescription>
+            </DialogHeader>
+            <Form {...editPromotionForm}>
+              <form onSubmit={editPromotionForm.handleSubmit((data) => selectedPromotion && updatePromotionMutation.mutate({ ...data, id: selectedPromotion.id }))} className="space-y-4">
+                <FormField
+                  control={editPromotionForm.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Promotion Name</FormLabel>
+                      <FormControl>
+                        <Input {...field} data-testid="input-edit-promotion-name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={editPromotionForm.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Description (Optional)</FormLabel>
+                      <FormControl>
+                        <Textarea {...field} data-testid="input-edit-promotion-description" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={editPromotionForm.control}
+                    name="type"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Type</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger data-testid="select-edit-promotion-type">
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="percentage">Percentage Off</SelectItem>
+                            <SelectItem value="fixed">Fixed Amount Off</SelectItem>
+                            <SelectItem value="buy-one-get-one">Buy One Get One</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={editPromotionForm.control}
+                    name="value"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Value</FormLabel>
+                        <FormControl>
+                          <Input type="number" {...field} data-testid="input-edit-promotion-value" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={editPromotionForm.control}
+                  name="appliesTo"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Applies To</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-edit-promotion-applies-to">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="all">All Products</SelectItem>
+                          <SelectItem value="product">Specific Product</SelectItem>
+                          <SelectItem value="group">Product Group</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setEditPromotionDialogOpen(false)} data-testid="button-cancel-edit-promotion">
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={updatePromotionMutation.isPending} data-testid="button-submit-edit-promotion">
+                    {updatePromotionMutation.isPending ? "Updating..." : "Update Promotion"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </Form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete Promotion Confirmation */}
+        <AlertDialog open={deletePromotionDialogOpen} onOpenChange={setDeletePromotionDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Promotion</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete "{selectedPromotion?.name}"? This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel data-testid="button-cancel-delete-promotion">Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => selectedPromotion && deletePromotionMutation.mutate(selectedPromotion.id)}
+                className="bg-destructive text-destructive-foreground hover-elevate active-elevate-2"
+                data-testid="button-confirm-delete-promotion"
+              >
+                {deletePromotionMutation.isPending ? "Deleting..." : "Delete"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
