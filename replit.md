@@ -41,6 +41,21 @@ Preferred communication style: Simple, everyday language.
 - Form state managed with React Hook Form and Zod validation
 - Local UI state using React hooks
 
+**React Query Architecture** (Updated November 15, 2025):
+- **Query Key Structure**: Hierarchical arrays for flexible cache invalidation
+  - Public products: `['/api/products', { status, page, filters... }]` (params memoized with useMemo)
+  - Vendor products: `['/api/vendor/products']`
+  - Product detail: `['/api/products/${id}']`
+- **Custom Query Fetcher**: Enhanced to handle hierarchical keys with object parameters
+  - Converts `['/api/products', { status: 'approved' }]` to `/api/products?status=approved`
+  - Falls back to join("/") for path-like keys
+- **Cache Invalidation Strategy**: Admin product approval triggers comprehensive invalidation
+  - Admin pending list
+  - Admin analytics
+  - Vendor products (explicit)
+  - ALL public product queries (predicate-based matching any key starting with '/api/products')
+  - Ensures synchronized views across admin, vendor, and public interfaces
+
 ### Backend Architecture
 
 **Technology Stack**:
