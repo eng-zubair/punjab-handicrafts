@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Category, Product } from "@shared/schema";
 import Header from "@/components/Header";
@@ -35,7 +35,7 @@ export default function Products() {
     queryKey: ['/api/categories'],
   });
 
-  const buildQueryParams = () => {
+  const queryParams = useMemo(() => {
     const params: Record<string, string | number> = {
       status: 'approved',
       page,
@@ -49,24 +49,13 @@ export default function Products() {
     if (priceRange[1] < 10000) params.maxPrice = priceRange[1];
     
     return params;
-  };
-
-  const buildQueryString = () => {
-    const params = new URLSearchParams();
-    const queryParams = buildQueryParams();
-    
-    Object.entries(queryParams).forEach(([key, value]) => {
-      params.append(key, value.toString());
-    });
-    
-    return `/api/products?${params.toString()}`;
-  };
+  }, [search, district, giBrand, priceRange, page, pageSize]);
 
   const { data: productsData, isLoading, isError, error, refetch } = useQuery<{
     products: Product[];
     pagination: { page: number; pageSize: number; total: number; totalPages: number };
   }>({
-    queryKey: ['/api/products', buildQueryParams()],
+    queryKey: ['/api/products', queryParams],
   });
 
   const handleResetFilters = () => {

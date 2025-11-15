@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import Header from "@/components/Header";
 import Hero from "@/components/Hero";
 import GIBrandCard from "@/components/GIBrandCard";
@@ -34,11 +35,13 @@ export default function Home() {
     queryKey: ['/api/categories'],
   });
 
+  const productsQueryParams = useMemo(() => ({ status: 'approved', pageSize: 8 }), []);
+
   const { data: productsResponse, isLoading: productsLoading } = useQuery<{
     products: Product[];
     pagination: { total: number };
   }>({
-    queryKey: ['/api/products?status=approved&pageSize=8'],
+    queryKey: ['/api/products', productsQueryParams],
   });
 
   const { data: storesData, isLoading: storesLoading } = useQuery<Store[]>({
