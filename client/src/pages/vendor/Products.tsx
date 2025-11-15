@@ -1,9 +1,18 @@
 import { VendorDashboard } from "./VendorDashboard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2, Package as PackageIcon } from "lucide-react";
+import { Plus, Pencil, Trash2, Package as PackageIcon, Power } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -69,6 +78,7 @@ type Product = {
   giBrand: string;
   status: string;
   storeId: string;
+  isActive: boolean;
   createdAt: string;
 };
 
@@ -176,7 +186,7 @@ export default function VendorProducts() {
       const { id, ...updateData } = data;
       // Use uploaded images if available, otherwise keep existing images
       const images = uploadedImages.length > 0 ? uploadedImages : selectedProduct?.images || [];
-      return apiRequest('PUT', `/api/products/${id}`, {
+      return apiRequest('PATCH', `/api/vendor/products/${id}`, {
         ...updateData,
         price: updateData.price,
         stock: parseInt(updateData.stock),
@@ -204,7 +214,7 @@ export default function VendorProducts() {
 
   const deleteProductMutation = useMutation({
     mutationFn: async (id: string) => {
-      return apiRequest('DELETE', `/api/products/${id}`, {});
+      return apiRequest('DELETE', `/api/vendor/products/${id}`, {});
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/vendor/products'] });
@@ -214,6 +224,26 @@ export default function VendorProducts() {
       toast({
         title: "Product deleted",
         description: "Your product has been removed",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const toggleActiveMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return apiRequest('PATCH', `/api/vendor/products/${id}/toggle-active`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/products'] });
+      toast({
+        title: "Product updated",
+        description: "Product visibility has been toggled",
       });
     },
     onError: (error: Error) => {
@@ -596,73 +626,91 @@ export default function VendorProducts() {
                 </CardContent>
               </Card>
             ) : (
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {filteredProducts.map((product) => (
-                  <Card key={product.id} className="overflow-hidden">
-                    <div className="aspect-square relative bg-muted">
-                      {product.images[0] && (
-                        <img
-                          src={normalizeImagePath(product.images[0])}
-                          alt={product.title}
-                          className="w-full h-full object-cover"
-                          data-testid={`img-product-${product.id}`}
-                        />
-                      )}
-                    </div>
-                    <CardHeader>
-                      <div className="flex items-start justify-between gap-2">
-                        <CardTitle className="text-lg line-clamp-1" data-testid={`text-product-title-${product.id}`}>
-                          {product.title}
-                        </CardTitle>
-                        {getStatusBadge(product.status)}
-                      </div>
-                      <CardDescription className="line-clamp-2">
-                        {product.description}
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Price:</span>
-                        <span className="font-semibold" data-testid={`text-product-price-${product.id}`}>
-                          PKR {parseFloat(product.price).toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Stock:</span>
-                        <span data-testid={`text-product-stock-${product.id}`}>{product.stock} units</span>
-                      </div>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">GI Brand:</span>
-                        <Badge variant="outline" className="text-xs" data-testid={`badge-product-gi-${product.id}`}>
-                          {product.giBrand}
-                        </Badge>
-                      </div>
-                      <div className="flex gap-2 pt-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="flex-1"
-                          onClick={() => handleEditProduct(product)}
-                          data-testid={`button-edit-product-${product.id}`}
-                        >
-                          <Pencil className="w-3 h-3 mr-1" />
-                          Edit
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          className="flex-1"
-                          onClick={() => handleDeleteProduct(product)}
-                          data-testid={`button-delete-product-${product.id}`}
-                        >
-                          <Trash2 className="w-3 h-3 mr-1" />
-                          Delete
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+              <Card>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-20">Image</TableHead>
+                      <TableHead>Product</TableHead>
+                      <TableHead>Price</TableHead>
+                      <TableHead>Stock</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Active</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredProducts.map((product) => (
+                      <TableRow key={product.id} data-testid={`row-product-${product.id}`}>
+                        <TableCell>
+                          <div className="w-16 h-16 rounded bg-muted overflow-hidden">
+                            {product.images[0] && (
+                              <img
+                                src={normalizeImagePath(product.images[0])}
+                                alt={product.title}
+                                className="w-full h-full object-cover"
+                                data-testid={`img-product-${product.id}`}
+                              />
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <p className="font-medium" data-testid={`text-product-title-${product.id}`}>
+                              {product.title}
+                            </p>
+                            <p className="text-sm text-muted-foreground line-clamp-1">
+                              {product.description}
+                            </p>
+                            <Badge variant="outline" className="text-xs" data-testid={`badge-product-gi-${product.id}`}>
+                              {product.giBrand}
+                            </Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <span className="font-semibold" data-testid={`text-product-price-${product.id}`}>
+                            PKR {parseFloat(product.price).toLocaleString()}
+                          </span>
+                        </TableCell>
+                        <TableCell data-testid={`text-product-stock-${product.id}`}>
+                          {product.stock} units
+                        </TableCell>
+                        <TableCell>
+                          {getStatusBadge(product.status)}
+                        </TableCell>
+                        <TableCell>
+                          <Switch
+                            checked={product.isActive}
+                            onCheckedChange={() => toggleActiveMutation.mutate(product.id)}
+                            disabled={toggleActiveMutation.isPending}
+                            data-testid={`switch-active-${product.id}`}
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleEditProduct(product)}
+                              data-testid={`button-edit-product-${product.id}`}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => handleDeleteProduct(product)}
+                              data-testid={`button-delete-product-${product.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Card>
             )}
           </TabsContent>
         </Tabs>
