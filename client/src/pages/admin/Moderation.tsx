@@ -84,6 +84,15 @@ export default function AdminModeration() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['/api/admin/products?status=pending'] });
       queryClient.invalidateQueries({ queryKey: ['/api/admin/analytics'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/products'] });
+      queryClient.invalidateQueries({ 
+        predicate: (query) => {
+          const queryKey = query.queryKey;
+          if (!Array.isArray(queryKey) || queryKey.length === 0) return false;
+          const firstKey = queryKey[0];
+          return typeof firstKey === 'string' && firstKey.startsWith('/api/products');
+        }
+      });
       toast({
         title: "Product updated",
         description: `Product ${variables.status === 'approved' ? 'approved' : 'rejected'} successfully.`,

@@ -35,17 +35,29 @@ export default function Products() {
     queryKey: ['/api/categories'],
   });
 
+  const buildQueryParams = () => {
+    const params: Record<string, string | number> = {
+      status: 'approved',
+      page,
+      pageSize,
+    };
+    
+    if (search) params.search = search;
+    if (district !== 'all') params.district = district;
+    if (giBrand !== 'all') params.giBrand = giBrand;
+    if (priceRange[0] > 0) params.minPrice = priceRange[0];
+    if (priceRange[1] < 10000) params.maxPrice = priceRange[1];
+    
+    return params;
+  };
+
   const buildQueryString = () => {
     const params = new URLSearchParams();
-    params.append('status', 'approved');
-    params.append('page', page.toString());
-    params.append('pageSize', pageSize.toString());
+    const queryParams = buildQueryParams();
     
-    if (search) params.append('search', search);
-    if (district !== 'all') params.append('district', district);
-    if (giBrand !== 'all') params.append('giBrand', giBrand);
-    if (priceRange[0] > 0) params.append('minPrice', priceRange[0].toString());
-    if (priceRange[1] < 10000) params.append('maxPrice', priceRange[1].toString());
+    Object.entries(queryParams).forEach(([key, value]) => {
+      params.append(key, value.toString());
+    });
     
     return `/api/products?${params.toString()}`;
   };
@@ -54,7 +66,7 @@ export default function Products() {
     products: Product[];
     pagination: { page: number; pageSize: number; total: number; totalPages: number };
   }>({
-    queryKey: [buildQueryString()],
+    queryKey: ['/api/products', buildQueryParams()],
   });
 
   const handleResetFilters = () => {
