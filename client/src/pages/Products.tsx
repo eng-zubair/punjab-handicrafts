@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { Category, Product } from "@shared/schema";
+import type { Category, Product, Store } from "@shared/schema";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import ProductCard from "@/components/ProductCard";
@@ -33,6 +33,10 @@ export default function Products() {
 
   const { data: categoriesData } = useQuery<Category[]>({
     queryKey: ['/api/categories'],
+  });
+
+  const { data: storesData } = useQuery<Store[]>({
+    queryKey: ['/api/stores?status=approved'],
   });
 
   const queryParams = useMemo(() => {
@@ -77,7 +81,7 @@ export default function Products() {
       image: imagePathMap[normalizedImage] || normalizedImage || multanImage,
       district: product.district,
       giBrand: product.giBrand,
-      vendorName: "Artisan Vendor",
+      vendorName: storesData?.find(s => s.id === product.storeId)?.name || "Artisan Vendor",
       storeId: product.storeId,
       stock: product.stock,
     };
