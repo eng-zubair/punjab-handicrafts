@@ -1,7 +1,7 @@
 import { VendorDashboard } from "./VendorDashboard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2, Package as PackageIcon, Power, Layers, Tag, Calendar } from "lucide-react";
+import { Plus, Pencil, Trash2, Package as PackageIcon, Power, Layers, Tag, Calendar, Wand2 } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -48,7 +48,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeImagePath } from "@/lib/utils/image";
@@ -62,6 +62,113 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { cn } from "@/lib/utils";
+
+const StableFocusInput = ({ 
+  field, 
+  type = 'text', 
+  placeholder, 
+  className,
+  onFocus,
+  onBlur,
+  ...props 
+}: any) => {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [hasFocus, setHasFocus] = useState(false);
+
+  useEffect(() => {
+    if (hasFocus && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [hasFocus]);
+
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    setHasFocus(true);
+    if (onFocus) onFocus(e);
+  };
+
+  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    setHasFocus(false);
+    if (onBlur) onBlur(e);
+    if (field?.onBlur) field.onBlur(e);
+  };
+
+  const setRef = (el: HTMLInputElement | null) => {
+    inputRef.current = el;
+    if (typeof field?.ref === 'function') {
+      field.ref(el);
+    }
+  };
+
+  return (
+    <Input
+      ref={setRef}
+      type={type}
+      placeholder={placeholder}
+      className={cn('transition-all duration-200', className, {
+        'ring-2 ring-primary ring-offset-2': hasFocus,
+      })}
+      name={field?.name}
+      value={field?.value}
+      onChange={field?.onChange}
+      onFocus={handleFocus}
+      onBlur={handleBlur}
+      {...props}
+    />
+  );
+};
+
+const StableFocusTextarea = ({ 
+  field, 
+  placeholder, 
+  className,
+  onFocus,
+  onBlur,
+  ...props 
+}: any) => {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [hasFocus, setHasFocus] = useState(false);
+
+  useEffect(() => {
+    if (hasFocus && textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, [hasFocus]);
+
+  const handleFocus = (e: React.FocusEvent<HTMLTextAreaElement>) => {
+    setHasFocus(true);
+    if (onFocus) onFocus(e);
+  };
+
+  const handleBlur = (e: React.FocusEvent<HTMLTextAreaElement>) => {
+    setHasFocus(false);
+    if (onBlur) onBlur(e);
+    if (field?.onBlur) field.onBlur(e);
+  };
+
+  const setRef = (el: HTMLTextAreaElement | null) => {
+    textareaRef.current = el;
+    if (typeof field?.ref === 'function') {
+      field.ref(el);
+    }
+  };
+
+  return (
+    <Textarea
+      ref={setRef}
+      placeholder={placeholder}
+      className={cn('transition-all duration-200', className, {
+        'ring-2 ring-primary ring-offset-2': hasFocus,
+      })}
+      name={field?.name}
+      value={field?.value}
+      onChange={field?.onChange}
+      onFocus={handleFocus}
+      onBlur={handleBlur}
+      {...props}
+    />
+  );
+};
 
 type Store = {
   id: string;
@@ -152,12 +259,13 @@ export default function VendorProducts() {
   const { toast } = useToast();
   const [mainTab, setMainTab] = useState("products");
   const [activeTab, setActiveTab] = useState("all");
-  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [addProductDialogOpen, setAddProductDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  
 
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [editGroupDialogOpen, setEditGroupDialogOpen] = useState(false);
@@ -196,18 +304,7 @@ export default function VendorProducts() {
     return p.status === activeTab;
   });
 
-  const addForm = useForm<ProductFormValues>({
-    resolver: zodResolver(productFormSchema),
-    defaultValues: {
-      title: "",
-      description: "",
-      price: "",
-      stock: "",
-      district: store?.district || "",
-      giBrand: store?.giBrands?.[0] || "",
-      images: "",
-    },
-  });
+  
 
   const editForm = useForm<ProductFormValues>({
     resolver: zodResolver(productFormSchema),
@@ -240,7 +337,7 @@ export default function VendorProducts() {
     resolver: zodResolver(promotionFormSchema),
   });
 
-  const addProductMutation = useMutation({
+  const createProductMutation = useMutation({
     mutationFn: async (data: ProductFormValues) => {
       if (!store) throw new Error("No store found");
       if (uploadedImages.length === 0) {
@@ -257,8 +354,7 @@ export default function VendorProducts() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/vendor/products'] });
       queryClient.invalidateQueries({ queryKey: ['/api/vendor/analytics'] });
-      setAddDialogOpen(false);
-      addForm.reset();
+      setAddProductDialogOpen(false);
       setUploadedImages([]);
       toast({
         title: "Product added",
@@ -273,6 +369,8 @@ export default function VendorProducts() {
       });
     },
   });
+
+  
 
   const updateProductMutation = useMutation({
     mutationFn: async (data: ProductFormValues & { id: string }) => {
@@ -522,14 +620,15 @@ export default function VendorProducts() {
 
   const handleDialogClose = (dialogType: 'add' | 'edit') => {
     if (dialogType === 'add') {
-      setAddDialogOpen(false);
-      addForm.reset();
+      setAddProductDialogOpen(false);
     } else {
       setEditDialogOpen(false);
       setSelectedProduct(null);
     }
     setUploadedImages([]);
   };
+
+  
 
   const handleDeleteProduct = (product: Product) => {
     setSelectedProduct(product);
@@ -596,7 +695,11 @@ export default function VendorProducts() {
           <FormItem>
             <FormLabel>Product Title</FormLabel>
             <FormControl>
-              <Input placeholder="Handwoven Basket" {...field} data-testid="input-product-title" />
+              <StableFocusInput
+                field={field}
+                placeholder="Handwoven Basket"
+                data-testid="input-product-title"
+              />
             </FormControl>
             <FormMessage />
           </FormItem>
@@ -610,10 +713,10 @@ export default function VendorProducts() {
           <FormItem>
             <FormLabel>Description</FormLabel>
             <FormControl>
-              <Textarea 
+              <StableFocusTextarea 
+                field={field}
                 placeholder="Describe your product..."
                 className="min-h-24"
-                {...field}
                 data-testid="input-product-description"
               />
             </FormControl>
@@ -630,7 +733,12 @@ export default function VendorProducts() {
             <FormItem>
               <FormLabel>Price (PKR)</FormLabel>
               <FormControl>
-                <Input type="number" placeholder="1500" {...field} data-testid="input-product-price" />
+                <StableFocusInput 
+                  field={field}
+                  type="number" 
+                  placeholder="1500" 
+                  data-testid="input-product-price" 
+                />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -644,7 +752,12 @@ export default function VendorProducts() {
             <FormItem>
               <FormLabel>Stock</FormLabel>
               <FormControl>
-                <Input type="number" placeholder="10" {...field} data-testid="input-product-stock" />
+                <StableFocusInput 
+                  field={field}
+                  type="number" 
+                  placeholder="10" 
+                  data-testid="input-product-stock" 
+                />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -798,43 +911,151 @@ export default function VendorProducts() {
             <p className="text-muted-foreground">Manage your catalog, groups, and promotions</p>
           </div>
           {mainTab === "products" && (
-            <Dialog open={addDialogOpen} onOpenChange={(open) => {
-              setAddDialogOpen(open);
-              if (!open) handleDialogClose('add');
-            }}>
-              <DialogTrigger asChild>
-                <Button data-testid="button-add-product">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Product
-                </Button>
-              </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Add New Product</DialogTitle>
-                <DialogDescription>
-                  Add a new product to your store catalog
-                </DialogDescription>
-              </DialogHeader>
-              <Form {...addForm}>
-                <form onSubmit={addForm.handleSubmit((data) => addProductMutation.mutate(data))} className="space-y-4">
-                  <ProductFormFields form={addForm} />
-                  <DialogFooter>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setAddDialogOpen(false)}
-                      data-testid="button-cancel-add"
-                    >
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={addProductMutation.isPending} data-testid="button-submit-add">
-                      {addProductMutation.isPending ? "Adding..." : "Add Product"}
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </Form>
-            </DialogContent>
-            </Dialog>
+            <div className="flex space-x-2">
+              <Dialog open={addProductDialogOpen} onOpenChange={(open) => {
+                setAddProductDialogOpen(open);
+                if (!open) handleDialogClose('add');
+              }}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" data-testid="button-add-product">
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Product
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Add New Product</DialogTitle>
+                    <DialogDescription>
+                      Create a new product for your store catalog
+                    </DialogDescription>
+                  </DialogHeader>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const formEl = e.currentTarget as HTMLFormElement & any;
+                      const formData: ProductFormValues = {
+                        title: formEl.title.value,
+                        description: formEl.description.value,
+                        price: formEl.price.value,
+                        stock: formEl.stock.value,
+                        district: formEl.district.value,
+                        giBrand: formEl.giBrand.value,
+                        images: "",
+                      };
+                      createProductMutation.mutate(formData);
+                    }}
+                    className="space-y-4"
+                  >
+                    <div className="space-y-2">
+                      <label htmlFor="title" className="text-sm font-medium">Product Title</label>
+                      <Input id="title" name="title" placeholder="Handwoven Basket" data-testid="input-product-title" />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label htmlFor="description" className="text-sm font-medium">Description</label>
+                      <Textarea id="description" name="description" placeholder="Describe your product..." className="min-h-24" data-testid="input-product-description" />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label htmlFor="price" className="text-sm font-medium">Price (PKR)</label>
+                        <Input id="price" name="price" type="number" placeholder="1500" data-testid="input-product-price" />
+                      </div>
+                      <div className="space-y-2">
+                        <label htmlFor="stock" className="text-sm font-medium">Stock</label>
+                        <Input id="stock" name="stock" type="number" placeholder="10" data-testid="input-product-stock" />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">District</label>
+                      <Select defaultValue={store?.district || ""} onValueChange={(val) => {
+                        const el = document.getElementById('district') as HTMLInputElement | null;
+                        if (el) el.value = val;
+                      }}>
+                        <SelectTrigger data-testid="select-product-district">
+                          <SelectValue placeholder="Select district" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {categories.map((cat) => (
+                            <SelectItem key={cat.district} value={cat.district}>
+                              {cat.district}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <input id="district" name="district" type="hidden" defaultValue={store?.district || ""} />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">GI Brand</label>
+                      <Select defaultValue={store?.giBrands?.[0] || ""} onValueChange={(val) => {
+                        const el = document.getElementById('giBrand') as HTMLInputElement | null;
+                        if (el) el.value = val;
+                      }}>
+                        <SelectTrigger data-testid="select-product-gi-brand">
+                          <SelectValue placeholder="Select GI brand" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {categories.map((cat) => (
+                            <SelectItem key={cat.giBrand} value={cat.giBrand}>
+                              {cat.giBrand}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <input id="giBrand" name="giBrand" type="hidden" defaultValue={store?.giBrands?.[0] || ""} />
+                      <p className="text-sm text-muted-foreground">Geographical Indication certified brand</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Product Images</label>
+                      <div className="space-y-4">
+                        <Input 
+                          type="file" 
+                          accept="image/jpeg,image/jpg,image/png,image/webp"
+                          multiple
+                          onChange={(e) => handleImageUpload(e.target.files)}
+                          disabled={isUploading}
+                          data-testid="input-product-images"
+                        />
+                        {isUploading && (
+                          <p className="text-sm text-muted-foreground">Uploading images...</p>
+                        )}
+                        {uploadedImages.length > 0 && (
+                          <div className="flex gap-2 flex-wrap">
+                            {uploadedImages.map((img, index) => (
+                              <div key={index} className="relative w-20 h-20 rounded border">
+                                <img 
+                                  src={normalizeImagePath(img)} 
+                                  alt={`Product ${index + 1}`}
+                                  className="w-full h-full object-cover rounded"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <p className="text-sm text-muted-foreground">Upload up to 5 images (JPEG, PNG, WebP). Max 5MB per image.</p>
+                      </div>
+                    </div>
+
+                    <DialogFooter>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setAddProductDialogOpen(false)}
+                        data-testid="button-cancel-add"
+                      >
+                        Cancel
+                      </Button>
+                      <Button type="submit" disabled={createProductMutation.isPending} data-testid="button-submit-add">
+                        {createProductMutation.isPending ? "Adding..." : "Add Product"}
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </DialogContent>
+              </Dialog>
+            </div>
           )}
           {mainTab === "groups" && (
             <Button onClick={() => setGroupDialogOpen(true)} data-testid="button-add-group">
@@ -1578,6 +1799,8 @@ export default function VendorProducts() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        
       </div>
     </VendorDashboard>
   );
