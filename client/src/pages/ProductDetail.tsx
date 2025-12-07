@@ -57,7 +57,6 @@ export default function ProductDetail() {
           : product.variants;
         if (Array.isArray(variants) && variants.length > 0) {
           setParsedVariants(variants);
-          setSelectedVariant(variants[0]);
         }
       } catch (e) {
         console.error("Failed to parse variants", e);
@@ -426,6 +425,11 @@ export default function ProductDetail() {
             <p className="text-sm text-muted-foreground mt-1" data-testid="text-stock" aria-live="polite">
               {isOutOfStock ? 'Currently unavailable' : `${selectedVariant ? selectedVariant.stock : product.stock} in stock`}
             </p>
+            {parsedVariants.length > 0 && !selectedVariant && (
+              <p className="text-xs text-muted-foreground mt-1" data-testid="text-variant-hint">
+                No variant selected — showing base product details
+              </p>
+            )}
             {selectedVariant && (
               <div className="mt-2 text-sm text-muted-foreground" data-testid="text-selected-variant-info">
                 <span className="mr-3">Type: {selectedVariant.type}</span>
@@ -451,7 +455,7 @@ export default function ProductDetail() {
                 {parsedVariants.map((v, idx) => (
                   <button
                     key={idx}
-                    onClick={() => setSelectedVariant(v)}
+                    onClick={() => setSelectedVariant(selectedVariant?.sku === v.sku ? null : v)}
                     className={cn(
                       "px-3 py-1.5 rounded-md border text-sm transition-all",
                       selectedVariant?.sku === v.sku
@@ -502,9 +506,9 @@ export default function ProductDetail() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => { setSelectedVariant(v); setSelectedImage(0); }}
+                        onClick={() => { setSelectedVariant(selectedVariant?.sku === v.sku ? null : v); setSelectedImage(0); }}
                         data-testid={`btn-select-variant-${v.sku}`}
-                      >Select</Button>
+                      >{selectedVariant?.sku === v.sku ? 'Deselect' : 'Select'}</Button>
                     </div>
                   );
                 })}

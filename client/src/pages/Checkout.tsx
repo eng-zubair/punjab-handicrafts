@@ -100,6 +100,8 @@ export default function Checkout() {
       storeId: i.storeId,
       quantity: i.quantity,
       price: i.price,
+      variantSku: i.variant?.sku,
+      variantAttributes: i.variant ? { type: i.variant.type, option: i.variant.option } : undefined,
     }));
     const localSubtotal = items.reduce((s, it) => s + parseFloat(String(it.price)) * it.quantity, 0);
     setSubtotalCalc(localSubtotal);

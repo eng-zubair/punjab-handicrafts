@@ -360,43 +360,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return undefined;
   }
 
-  async function computeTax(items: Array<{ productId: string; quantity: number; price: string; productCategory?: string; taxExempt?: boolean }>, province: string | undefined, buyerId: string): Promise<{ amount: number; breakdown: Array<{ productId: string; rate: number; tax: number }> }> {
+  async function computeTax(items: Array<{ productId: string; quantity: number; price: string; productCategory?: string; taxExempt?: boolean }>, _province: string | undefined, _buyerId: string): Promise<{ amount: number; breakdown: Array<{ productId: string; rate: number; tax: number }> }> {
     const settingsRows = await db.select().from(platformSettings);
     const taxEnabled = settingsRows.length === 0 ? true : !!settingsRows[0].taxEnabled;
     if (!taxEnabled) return { amount: 0, breakdown: items.map(it => ({ productId: it.productId, rate: 0, tax: 0 })) };
 
-    const user = await storage.getUser(buyerId);
-    if (user?.taxExempt) return { amount: 0, breakdown: items.map(it => ({ productId: it.productId, rate: 0, tax: 0 })) };
-
     const rules = await db.select().from(taxRules);
-    let totalTax = 0;
+    const generalCandidates = rules
+      .filter((r: any) => r.enabled && !r.exempt)
+      .filter((r: any) => !r.category || String(r.category).toLowerCase() === 'general')
+      .filter((r: any) => !r.province);
+    const sorted = (generalCandidates.length ? generalCandidates : rules.filter((r: any) => r.enabled && !r.exempt))
+      .sort((a: any, b: any) => (Number(b.priority || 0) - Number(a.priority || 0)));
+    const globalRate = sorted.length ? parseFloat(String(sorted[0].rate)) : 0;
+    const rate = Number.isFinite(globalRate) && globalRate > 0 ? globalRate : 0;
+
+    let subtotal = 0;
     const breakdown: Array<{ productId: string; rate: number; tax: number }> = [];
     for (const it of items) {
-      const line = parseFloat(String(it.price)) * Number(it.quantity);
-      const cat = String(it.productCategory || 'general').toLowerCase();
-      const applicable = rules
-        .filter(r => r.enabled)
-        .filter(r => !r.category || String(r.category).toLowerCase() === cat)
-        .filter(r => !r.province || (province && String(r.province).toLowerCase() === province.toLowerCase()))
-        .sort((a: any, b: any) => (Number(b.priority || 0) - Number(a.priority || 0)));
-      let rate = 0;
-      let tax = 0;
-      if (it.taxExempt) {
-        rate = 0;
-        tax = 0;
-      } else if (applicable.length > 0) {
-        const rule = applicable[0] as any;
-        if (rule.exempt) {
-          rate = 0;
-          tax = 0;
-        } else {
-          rate = parseFloat(String(rule.rate));
-          tax = (rate / 100) * line;
-        }
-      }
-      totalTax += tax;
+      const unit = parseFloat(String(it.price));
+      const qty = Number(it.quantity);
+      const line = (Number.isFinite(unit) ? unit : 0) * (Number.isFinite(qty) ? qty : 0);
+      subtotal += line;
+      const tax = (rate / 100) * line;
       breakdown.push({ productId: it.productId, rate, tax });
     }
+    const totalTax = (rate / 100) * subtotal;
     return { amount: parseFloat(totalTax.toFixed(2)), breakdown };
   }
 
@@ -2211,11 +2200,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           variantRow = await storage.getVariantBySku(String(i.variantSku));
         }
         const priceSource = variantRow ? String(variantRow.price) : String(productMap.get(i.productId)?.price ?? '0');
+        const provided = i.price;
+        const parsedProvided = parseFloat(String(provided));
+        const finalPrice = Number.isFinite(parsedProvided) ? String(parsedProvided) : priceSource;
         return {
           productId: i.productId,
           storeId: i.storeId,
           quantity: i.quantity,
-          price: (i.price ?? priceSource),
+          price: finalPrice,
           variantSku: i.variantSku || null,
           variantAttributes: i.variantAttributes || null,
           weightKg: productMap.get(i.productId)?.weightKg ? parseFloat(String(productMap.get(i.productId)?.weightKg)) : undefined,
@@ -2226,7 +2218,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           taxExempt: !!productMap.get(i.productId)?.taxExempt,
         };
       }));
-      const subtotal = normalized.reduce((s, it) => s + parseFloat(String(it.price)) * Number(it.quantity), 0);
+      const subtotal = normalized.reduce((s, it) => {
+        const unit = parseFloat(String(it.price));
+        const qty = Number(it.quantity);
+        const safeLine = (Number.isFinite(unit) ? unit : 0) * (Number.isFinite(qty) ? qty : 0);
+        return s + safeLine;
+      }, 0);
       const province = shippingProvince || detectProvince(shippingAddress || [shippingStreet, shippingCity, shippingProvince, shippingPostalCode, shippingCountry].filter(Boolean).join(', '));
       const taxRes = await computeTax(normalized, province, userId);
       const shipRes = await computeShipping(normalized, province, shippingMethod);
