@@ -10,34 +10,43 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, Package, ShoppingCart, Store, Settings } from "lucide-react";
+import { LayoutDashboard, Package, ShoppingCart, Store, Settings, LogOut } from "lucide-react";
 import { Link, useLocation } from "wouter";
+import { useAuth } from "@/hooks/use-auth";
+import { useQuery } from "@tanstack/react-query";
 
 const menuItems = [
   {
     title: "Overview",
     url: "/vendor/dashboard",
     icon: LayoutDashboard,
+    tip: "View your store overview and status",
   },
   {
     title: "Products",
     url: "/vendor/products",
     icon: Package,
+    tip: "Manage products: add, edit, and deactivate",
   },
   {
     title: "Orders",
     url: "/vendor/orders",
     icon: ShoppingCart,
+    tip: "Track and manage customer orders",
   },
   {
     title: "Store Settings",
     url: "/vendor/store",
     icon: Settings,
+    tip: "Update store information and preferences",
   },
 ];
 
 export function VendorSidebar() {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
+  const { logout, isLoggingOut } = useAuth();
+  const { data: stores = [] } = useQuery<any[]>({ queryKey: ['/api/vendor/stores'] });
+  const isDeactivated = (stores?.[0]?.status === 'deactivated');
 
   return (
     <Sidebar>
@@ -60,12 +69,19 @@ export function VendorSidebar() {
             <SidebarMenu>
               {menuItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location === item.url}>
-                    <Link href={item.url} data-testid={`link-vendor-${item.title.toLowerCase().replace(/\s+/g, '-')}`}>
+                  {isDeactivated && item.title !== 'Overview' ? (
+                    <SidebarMenuButton aria-disabled className="opacity-50 cursor-not-allowed">
                       <item.icon className="w-4 h-4" />
                       <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
+                    </SidebarMenuButton>
+                  ) : (
+                    <SidebarMenuButton asChild isActive={location === item.url}>
+                      <Link href={item.url} data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, '-')}`} aria-label={item.title} data-tooltip={item.tip}>
+                        <item.icon className="w-4 h-4" />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  )}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
@@ -80,6 +96,20 @@ export function VendorSidebar() {
                 <Store className="w-4 h-4" />
                 <span>Back to Marketplace</span>
               </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              onClick={() =>
+                logout(undefined, {
+                  onSuccess: () => setLocation("/"),
+                })
+              }
+              disabled={isLoggingOut}
+              data-testid="button-sidebar-logout"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>{isLoggingOut ? "Logging out..." : "Logout"}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

@@ -9,6 +9,11 @@ export interface CartItem {
   storeName: string;
   quantity: number;
   stock: number;
+  variant?: {
+    type: string;
+    option: string;
+    sku: string;
+  };
 }
 
 const CART_STORAGE_KEY = 'sanatzar_cart';
@@ -36,7 +41,10 @@ export function saveCart(cart: CartItem[]): void {
 
 export function addToCart(item: Omit<CartItem, 'quantity'>, quantity: number = 1): CartItem[] {
   const cart = getCart();
-  const existingItemIndex = cart.findIndex(i => i.productId === item.productId);
+  const existingItemIndex = cart.findIndex(i => 
+    i.productId === item.productId && 
+    JSON.stringify(i.variant) === JSON.stringify(item.variant)
+  );
   
   if (existingItemIndex >= 0) {
     const existingItem = cart[existingItemIndex];
@@ -51,15 +59,27 @@ export function addToCart(item: Omit<CartItem, 'quantity'>, quantity: number = 1
   return cart;
 }
 
-export function removeFromCart(productId: string): CartItem[] {
-  const cart = getCart().filter(item => item.productId !== productId);
+export function removeFromCart(productId: string, variantSku?: string): CartItem[] {
+  const cart = getCart().filter(item => {
+    if (item.productId !== productId) return true;
+    // If removing specific variant
+    if (variantSku) {
+      return item.variant?.sku !== variantSku;
+    }
+    // If no variant specified, remove all instances of this product (legacy behavior)
+    // Or should we be stricter? For now, let's say if variantSku is undefined, we remove all.
+    return false; 
+  });
   saveCart(cart);
   return cart;
 }
 
-export function updateCartItemQuantity(productId: string, quantity: number): CartItem[] {
+export function updateCartItemQuantity(productId: string, quantity: number, variantSku?: string): CartItem[] {
   const cart = getCart();
-  const itemIndex = cart.findIndex(i => i.productId === productId);
+  const itemIndex = cart.findIndex(i => 
+    i.productId === productId && 
+    (variantSku ? i.variant?.sku === variantSku : !i.variant)
+  );
   
   if (itemIndex >= 0) {
     if (quantity <= 0) {

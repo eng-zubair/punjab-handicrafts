@@ -3,7 +3,7 @@ import { VendorDashboard } from "./VendorDashboard";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { CheckCircle2, Circle, Store as StoreIcon, Package, ShoppingCart, DollarSign, AlertCircle, Clock } from "lucide-react";
+import { CheckCircle2, Circle, Store as StoreIcon, Package, ShoppingCart, DollarSign, AlertCircle, Clock, Tag, XCircle } from "lucide-react";
 import { Link } from "wouter";
 import { formatPrice } from "@/lib/utils/price";
 
@@ -24,11 +24,21 @@ type Analytics = {
   totalOrders: number;
   totalProducts: number;
   totalStores: number;
+  promotionProductCount?: number;
+  promotionActiveProductCount?: number;
+  promotionTypeBreakdown?: { percentage: number; fixed: number; 'buy-one-get-one': number };
 };
 
 type Order = {
   id: string;
   status: string;
+  items: Array<{
+    price: string;
+    quantity: number;
+  }>;
+  paymentMethod?: string | null;
+  codPaymentStatus?: string | null;
+  paymentVerificationStatus?: string | null;
 };
 
 export default function VendorOverview() {
@@ -45,10 +55,49 @@ export default function VendorOverview() {
   });
 
   const store = stores?.[0];
+  const isDeactivated = store?.status === 'deactivated';
+  const { data: statusReason } = useQuery<{ status: string; reason: string | null}>({
+    queryKey: ['/api/vendor/stores/deactivation', store?.id || ''],
+    enabled: !!store?.id && isDeactivated,
+    queryFn: async () => {
+      const res = await fetch(`/api/vendor/stores/${store!.id}/deactivation-reason`, { credentials: 'include' });
+      return res.json();
+    }
+  });
   const pendingOrders = orders.filter(o => o.status === 'pending').length;
+  const canceledOrders = orders.filter(o => o.status === 'cancelled').length;
+  const deliveredOrders = orders.filter(o => o.status === 'delivered').length;
+  const totalOrders = orders.length;
+
+  // Calculate total earnings from delivered orders
+  const totalEarnings = orders
+    .filter(o => o.status === 'delivered')
+    .reduce((sum, order) => {
+      const orderTotal = order.items?.reduce((acc, item) => acc + (parseFloat(item.price) * item.quantity), 0) || 0;
+      return sum + orderTotal;
+    }, 0);
+
+  const verifiedPaymentsTotal = orders
+    .filter(o => o.status !== 'cancelled' && o.paymentVerificationStatus === 'cleared')
+    .reduce((sum, order) => {
+      const orderTotal = order.items?.reduce((acc, item) => acc + (parseFloat(item.price) * item.quantity), 0) || 0;
+      return sum + orderTotal;
+    }, 0);
+
+  const unverifiedPaymentsTotal = orders
+    .filter(o => o.status !== 'cancelled')
+    .filter(o => {
+      const pm = (o.paymentMethod || '').toLowerCase();
+      return (o.paymentVerificationStatus !== 'cleared') && (o.codPaymentStatus === 'collected' || pm === 'jazzcash' || pm === 'easypaisa');
+    })
+    .reduce((sum, order) => {
+      const orderTotal = order.items?.reduce((acc, item) => acc + (parseFloat(item.price) * item.quantity), 0) || 0;
+      return sum + orderTotal;
+    }, 0);
+
   const isStoreApproved = store?.status === 'approved';
   const hasProducts = (analytics?.totalProducts || 0) > 0;
-  const hasOrders = (analytics?.totalOrders || 0) > 0;
+  const hasOrders = totalOrders > 0;
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -115,6 +164,15 @@ export default function VendorOverview() {
           </Alert>
         )}
 
+        {store && isDeactivated && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription data-testid="alert-store-deactivated">
+              Your store is deactivated. {statusReason?.reason ? `Reason: ${statusReason.reason}` : 'Contact admin for activation.'}
+            </AlertDescription>
+          </Alert>
+        )}
+
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
@@ -138,10 +196,10 @@ export default function VendorOverview() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold" data-testid="metric-total-orders">
-                {analytics?.totalOrders || 0}
+                {totalOrders}
               </div>
               <p className="text-xs text-muted-foreground">
-                {!analytics?.totalOrders ? 'No orders yet' : 'Total orders'}
+                {totalOrders === 0 ? 'No orders yet' : 'Total orders'}
               </p>
             </CardContent>
           </Card>
@@ -163,15 +221,93 @@ export default function VendorOverview() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Delivered Orders</CardTitle>
+              <CheckCircle2 className="w-4 h-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold" data-testid="metric-delivered-orders">
+                {deliveredOrders}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Successfully delivered
+              </p>
+            </CardContent>
+          </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Canceled Orders</CardTitle>
+            <XCircle className="w-4 h-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold" data-testid="metric-canceled-orders">
+              {canceledOrders}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Cancelled orders
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Verified Payments</CardTitle>
+            <CheckCircle2 className="w-4 h-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold" data-testid="metric-verified-payments">
+              {formatPrice(verifiedPaymentsTotal)}
+            </div>
+            <p className="text-xs text-muted-foreground">Cleared payments</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Unverified Payments</CardTitle>
+            <AlertCircle className="w-4 h-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold" data-testid="metric-unverified-payments">
+              {formatPrice(unverifiedPaymentsTotal)}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {unverifiedPaymentsTotal === 0 ? 'No pending verifications' : 'Awaiting verification'}
+            </p>
+          </CardContent>
+        </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Total Earnings</CardTitle>
               <DollarSign className="w-4 h-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold" data-testid="metric-total-revenue">
-                {formatPrice(analytics?.totalEarnings)}
+                {formatPrice(totalEarnings)}
               </div>
               <p className="text-xs text-muted-foreground">
-                {!analytics?.totalEarnings || analytics.totalEarnings === '0.00' ? 'No sales yet' : 'Your earnings'}
+                {totalEarnings === 0 ? 'No sales yet' : 'Your earnings'}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">In Promotions</CardTitle>
+              <Tag className="w-4 h-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold" data-testid="metric-promo-active-products">
+                {analytics?.promotionActiveProductCount || 0}
+              </div>
+              <div className="flex items-center gap-2 mt-1">
+                <Badge variant="outline">% {analytics?.promotionTypeBreakdown?.percentage || 0}</Badge>
+                <Badge variant="outline">PKR {analytics?.promotionTypeBreakdown?.fixed || 0}</Badge>
+                <Badge variant="outline">BOGO {analytics?.promotionTypeBreakdown?.['buy-one-get-one'] || 0}</Badge>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Total associations: {analytics?.promotionProductCount || 0}
               </p>
             </CardContent>
           </Card>

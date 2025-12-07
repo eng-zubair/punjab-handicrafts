@@ -13,6 +13,11 @@ import {
   productGroupMembers,
   promotions,
   promotionProducts,
+  promotionProductHistory,
+  reviews,
+  reviewMedia,
+  reviewVotes,
+  productCategories,
   type User,
   type UpsertUser,
   type InsertStore,
@@ -25,6 +30,8 @@ import {
   type OrderItem,
   type InsertCategory,
   type Category,
+  type InsertProductCategory,
+  type ProductCategory,
   type InsertMessage,
   type Message,
   type InsertSubscription,
@@ -41,9 +48,11 @@ import {
   type Promotion,
   type InsertPromotionProduct,
   type PromotionProduct,
+  type Review,
+  type InsertReview,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, or, like, gte, lte, desc, asc, count, inArray } from "drizzle-orm";
+import { eq, and, or, like, gte, lte, desc, asc, count, inArray, sql } from "drizzle-orm";
 
 // Utility function to normalize image paths to start with /
 function normalizeImagePath(path: string): string {
@@ -68,6 +77,8 @@ export interface IStorage {
   upsertUser(user: UpsertUser): Promise<User>;
   updateUserRole(id: string, role: string): Promise<User | undefined>;
   updatePassword(userId: string, passwordHash: string): Promise<User | undefined>;
+  updateUserActiveStatus(id: string, isActive: boolean): Promise<User | undefined>;
+  updateUserLastLogin(id: string, lastLogin: Date): Promise<User | undefined>;
   updateVerificationToken(userId: string, token: string | null): Promise<User | undefined>;
   updatePasswordResetToken(userId: string, token: string | null, expires: Date | null): Promise<User | undefined>;
 
@@ -117,6 +128,9 @@ export interface IStorage {
   addProductToPromotion(promotionId: string, productId: string): Promise<PromotionProduct>;
   removeProductFromPromotion(promotionId: string, productId: string): Promise<void>;
   getPromotionProducts(promotionId: string): Promise<PromotionProduct[]>;
+  getPromotionProductsWithDetails(promotionId: string): Promise<(PromotionProduct & { product: Product })[]>;
+  getPromotionStatsForPromotions(promotionIds: string[]): Promise<Record<string, { productCount: number; lastAddedAt: string | null; lastRemovedAt: string | null }>>;
+  getPromotionProductsByStoreWithPromotions(storeId: string): Promise<(PromotionProduct & { promotion: Promotion })[]>;
 
   // Order operations
   createOrder(order: InsertOrder): Promise<Order>;
@@ -125,6 +139,7 @@ export interface IStorage {
   getOrdersByStore(storeId: string): Promise<Order[]>;
   getAllOrders(): Promise<Order[]>;
   updateOrderStatus(id: string, status: string): Promise<Order | undefined>;
+  updateOrderMeta(id: string, updates: Partial<InsertOrder>): Promise<Order | undefined>;
 
   // Order Item operations
   createOrderItem(item: InsertOrderItem): Promise<OrderItem>;
@@ -135,6 +150,12 @@ export interface IStorage {
   createCategory(category: InsertCategory): Promise<Category>;
   getAllCategories(): Promise<Category[]>;
   getCategoryByDistrict(district: string): Promise<Category | undefined>;
+
+  // Product Category operations
+  createProductCategory(category: InsertProductCategory): Promise<ProductCategory>;
+  getAllProductCategories(): Promise<ProductCategory[]>;
+  updateProductCategory(id: string, updates: Partial<InsertProductCategory>): Promise<ProductCategory | undefined>;
+  deleteProductCategory(id: string): Promise<void>;
 
   // Message operations
   createMessage(message: InsertMessage): Promise<Message>;
@@ -156,6 +177,12 @@ export interface IStorage {
   createPayout(payout: InsertPayout): Promise<Payout>;
   getPayoutsByVendor(vendorId: string): Promise<Payout[]>;
   updatePayoutStatus(id: string, status: string, processedAt?: Date): Promise<Payout | undefined>;
+
+  createReview(data: InsertReview & { verifiedPurchase: boolean; status: string }): Promise<Review>;
+  getReviewsByProduct(productId: string, sort: "newest" | "highest" | "helpful"): Promise<Review[]>;
+  addReviewMedia(reviewId: string, url: string, type: string): Promise<void>;
+  upsertReviewVote(reviewId: string, userId: string, value: 1 | -1): Promise<{ helpfulUp: number; helpfulDown: number }>;
+  getReviewStats(productId: string): Promise<{ count: number; average: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -217,6 +244,24 @@ export class DatabaseStorage implements IStorage {
       .update(users)
       .set({ passwordHash, updatedAt: new Date() })
       .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async updateUserActiveStatus(id: string, isActive: boolean): Promise<User | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({ isActive, updatedAt: new Date() })
+      .where(eq(users.id, id))
+      .returning();
+    return user;
+  }
+
+  async updateUserLastLogin(id: string, lastLogin: Date): Promise<User | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({ lastLogin, updatedAt: new Date() })
+      .where(eq(users.id, id))
       .returning();
     return user;
   }
@@ -302,10 +347,12 @@ export class DatabaseStorage implements IStorage {
   async getAllProducts(filters?: {
     district?: string;
     giBrand?: string;
+    category?: string;
     minPrice?: number;
     maxPrice?: number;
     search?: string;
     status?: string;
+    isActive?: boolean;
     page?: number;
     pageSize?: number;
   }): Promise<{ products: Product[], total: number }> {
@@ -315,6 +362,9 @@ export class DatabaseStorage implements IStorage {
     }
     if (filters?.giBrand) {
       conditions.push(eq(products.giBrand, filters.giBrand));
+    }
+    if (filters?.category) {
+      conditions.push(eq(products.category, filters.category));
     }
     if (filters?.minPrice !== undefined) {
       conditions.push(gte(products.price, filters.minPrice.toString()));
@@ -328,6 +378,9 @@ export class DatabaseStorage implements IStorage {
     if (filters?.status) {
       conditions.push(eq(products.status, filters.status));
     }
+    if (filters?.isActive !== undefined) {
+      conditions.push(eq(products.isActive, filters.isActive));
+    }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -337,8 +390,15 @@ export class DatabaseStorage implements IStorage {
       .where(whereClause);
 
     const baseQuery = whereClause 
-      ? db.select().from(products).where(whereClause)
-      : db.select().from(products);
+      ? db
+          .select()
+          .from(products)
+          .where(whereClause)
+          .orderBy(desc(products.createdAt))
+      : db
+          .select()
+          .from(products)
+          .orderBy(desc(products.createdAt));
 
     if (filters?.page !== undefined && filters?.pageSize !== undefined) {
       const offset = (filters.page - 1) * filters.pageSize;
@@ -495,6 +555,113 @@ export class DatabaseStorage implements IStorage {
       .where(eq(promotionProducts.promotionId, promotionId));
   }
 
+  async getPromotionProductsWithDetails(promotionId: string): Promise<(PromotionProduct & { product: Product })[]> {
+    const rows = await db
+      .select()
+      .from(promotionProducts)
+      .where(eq(promotionProducts.promotionId, promotionId));
+    const productIds = rows.map(r => r.productId);
+    const productsList = productIds.length ? await db.select().from(products).where(inArray(products.id, productIds)) : [];
+    const map = new Map(productsList.map(p => [p.id, p]));
+    return rows.map(r => ({ ...r, product: map.get(r.productId)! })).filter(r => r.product);
+  }
+
+  async getPromotionStatsForPromotions(promotionIds: string[]): Promise<Record<string, { productCount: number; lastAddedAt: string | null; lastRemovedAt: string | null }>> {
+    if (!promotionIds || promotionIds.length === 0) return {};
+
+    const countRows = await db
+      .select({
+        promotionId: promotionProducts.promotionId,
+        productCount: count(promotionProducts.id),
+        lastAddedAt: sql<string>`max(${promotionProducts.createdAt})`,
+      })
+      .from(promotionProducts)
+      .where(inArray(promotionProducts.promotionId, promotionIds))
+      .groupBy(promotionProducts.promotionId);
+
+    const removeRows = await db
+      .select({
+        promotionId: promotionProductHistory.promotionId,
+        lastRemovedAt: sql<string>`max(${promotionProductHistory.createdAt})`,
+      })
+      .from(promotionProductHistory)
+      .where(and(inArray(promotionProductHistory.promotionId, promotionIds), eq(promotionProductHistory.changeType, 'remove')))
+      .groupBy(promotionProductHistory.promotionId);
+
+    const removeMap = new Map(removeRows.map(r => [r.promotionId as string, (r.lastRemovedAt as any) ? String(r.lastRemovedAt) : null]));
+
+    const out: Record<string, { productCount: number; lastAddedAt: string | null; lastRemovedAt: string | null }> = {};
+    for (const r of countRows as any[]) {
+      const pid = String(r.promotionId);
+      out[pid] = {
+        productCount: Number(r.productCount) || 0,
+        lastAddedAt: r.lastAddedAt ? String(r.lastAddedAt) : null,
+        lastRemovedAt: removeMap.get(pid) || null,
+      };
+    }
+    for (const pid of promotionIds) {
+      if (!out[pid]) {
+        out[pid] = { productCount: 0, lastAddedAt: null, lastRemovedAt: removeMap.get(pid) || null };
+      }
+    }
+    return out;
+  }
+
+  async getPromotionProductsByStoreWithPromotions(storeId: string): Promise<(PromotionProduct & { promotion: Promotion })[]> {
+    const promos = await this.getPromotionsByStore(storeId);
+    const ids = promos.map(p => p.id);
+    if (ids.length === 0) return [];
+    const rows = await db
+      .select()
+      .from(promotionProducts)
+      .where(inArray(promotionProducts.promotionId, ids));
+    const map = new Map(promos.map(p => [p.id, p]));
+    return rows.map(r => ({ ...r, promotion: map.get(r.promotionId)! })).filter(r => r.promotion);
+  }
+
+  async addProductsToPromotionBulk(
+    promotionId: string,
+    items: { productId: string; overridePrice?: string | null; quantityLimit?: number; conditions?: any }[],
+  ): Promise<PromotionProduct[]> {
+    if (!items || items.length === 0) return [];
+    const insertValues = items.map(i => ({
+      promotionId,
+      productId: i.productId,
+      overridePrice: i.overridePrice ?? null,
+      quantityLimit: typeof i.quantityLimit === 'number' ? i.quantityLimit : 0,
+      conditions: i.conditions ?? null,
+    }));
+
+    return await db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(promotionProducts)
+        .values(insertValues)
+        .onConflictDoNothing()
+        .returning();
+
+      const historyValues = inserted.map(ip => ({
+        promotionId: ip.promotionId,
+        productId: ip.productId,
+        changeType: 'add',
+        changes: { overridePrice: ip.overridePrice, quantityLimit: ip.quantityLimit, conditions: ip.conditions },
+        changedBy: '',
+      }));
+
+      return inserted;
+    });
+  }
+
+  async removeProductsFromPromotionBulk(
+    promotionId: string,
+    productIds: string[],
+  ): Promise<void> {
+    if (!productIds || productIds.length === 0) return;
+    await db.transaction(async (tx) => {
+      await tx.delete(promotionProducts)
+        .where(and(eq(promotionProducts.promotionId, promotionId), inArray(promotionProducts.productId, productIds)));
+    });
+  }
+
   // Order operations
   async createOrder(order: InsertOrder): Promise<Order> {
     const [newOrder] = await db.insert(orders).values(order).returning();
@@ -540,6 +707,15 @@ export class DatabaseStorage implements IStorage {
     const [order] = await db
       .update(orders)
       .set({ status })
+      .where(eq(orders.id, id))
+      .returning();
+    return order;
+  }
+
+  async updateOrderMeta(id: string, updates: Partial<InsertOrder>): Promise<Order | undefined> {
+    const [order] = await db
+      .update(orders)
+      .set(updates)
       .where(eq(orders.id, id))
       .returning();
     return order;
@@ -607,6 +783,29 @@ export class DatabaseStorage implements IStorage {
       .from(categories)
       .where(eq(categories.district, district));
     return category;
+  }
+
+  // Product Category operations
+  async createProductCategory(category: InsertProductCategory): Promise<ProductCategory> {
+    const [newCategory] = await db.insert(productCategories).values(category).returning();
+    return newCategory;
+  }
+
+  async getAllProductCategories(): Promise<ProductCategory[]> {
+    return await db.select().from(productCategories);
+  }
+
+  async updateProductCategory(id: string, updates: Partial<InsertProductCategory>): Promise<ProductCategory | undefined> {
+    const [cat] = await db
+      .update(productCategories)
+      .set(updates)
+      .where(eq(productCategories.id, id))
+      .returning();
+    return cat;
+  }
+
+  async deleteProductCategory(id: string): Promise<void> {
+    await db.delete(productCategories).where(eq(productCategories.id, id));
   }
 
   // Message operations
@@ -712,6 +911,82 @@ export class DatabaseStorage implements IStorage {
       .where(eq(payouts.id, id))
       .returning();
     return payout;
+  }
+
+  async createReview(data: InsertReview & { verifiedPurchase: boolean; status: string }): Promise<Review> {
+    const [r] = await db
+      .insert(reviews)
+      .values({
+        productId: data.productId,
+        userId: data.userId,
+        rating: data.rating,
+        comment: data.comment,
+        verifiedPurchase: data.verifiedPurchase,
+        status: data.status,
+      })
+      .returning();
+    return r as Review;
+  }
+
+  async getReviewsByProduct(productId: string, sort: "newest" | "highest" | "helpful"): Promise<Review[]> {
+    let orderBy = desc(reviews.createdAt);
+    if (sort === "highest") orderBy = desc(reviews.rating);
+    if (sort === "helpful") orderBy = desc(sql`${reviews.helpfulUp} - ${reviews.helpfulDown}`);
+    const list = await db
+      .select()
+      .from(reviews)
+      .where(eq(reviews.productId, productId))
+      .orderBy(orderBy);
+    return list as Review[];
+  }
+
+  async addReviewMedia(reviewId: string, url: string, type: string): Promise<void> {
+    await db.insert(reviewMedia).values({ reviewId, url, type });
+  }
+
+  async upsertReviewVote(reviewId: string, userId: string, value: 1 | -1): Promise<{ helpfulUp: number; helpfulDown: number }> {
+    const existing = await db
+      .select()
+      .from(reviewVotes)
+      .where(and(eq(reviewVotes.reviewId, reviewId), eq(reviewVotes.userId, userId)));
+    if (existing.length === 0) {
+      await db.insert(reviewVotes).values({ reviewId, userId, value });
+      if (value === 1) await db.execute(sql`UPDATE reviews SET helpful_up = helpful_up + 1 WHERE id = ${reviewId}`);
+      else await db.execute(sql`UPDATE reviews SET helpful_down = helpful_down + 1 WHERE id = ${reviewId}`);
+    } else {
+      const prev = existing[0].value;
+      if (prev !== value) {
+        await db.update(reviewVotes).set({ value }).where(eq(reviewVotes.id, existing[0].id));
+        if (prev === 1 && value === -1) await db.execute(sql`UPDATE reviews SET helpful_up = helpful_up - 1, helpful_down = helpful_down + 1 WHERE id = ${reviewId}`);
+        if (prev === -1 && value === 1) await db.execute(sql`UPDATE reviews SET helpful_down = helpful_down - 1, helpful_up = helpful_up + 1 WHERE id = ${reviewId}`);
+      }
+    }
+    const rows = await db.select({ up: reviews.helpfulUp, down: reviews.helpfulDown }).from(reviews).where(eq(reviews.id, reviewId));
+    const r = rows[0];
+    return { helpfulUp: Number(r?.up ?? 0), helpfulDown: Number(r?.down ?? 0) };
+  }
+
+  async getReviewStats(productId: string): Promise<{ count: number; average: number }> {
+    const rows = await db
+      .select({ count: count(), avg: sql<number>`AVG(${reviews.rating})` })
+      .from(reviews)
+      .where(and(eq(reviews.productId, productId), eq(reviews.status, "approved")));
+    const r = rows[0] as any;
+    return { count: Number(r?.count ?? 0), average: Number(r?.avg ?? 0) };
+  }
+
+  async getReviewMedia(reviewId: string): Promise<{ url: string; type: string }[]> {
+    const rows = await db.select().from(reviewMedia).where(eq(reviewMedia.reviewId, reviewId));
+    return rows.map((m: any) => ({ url: m.url, type: m.type }));
+  }
+
+  async getPlatformReviewAnalytics(): Promise<{ total: number; average: number }> {
+    const rows = await db
+      .select({ count: count(), avg: sql<number>`AVG(${reviews.rating})` })
+      .from(reviews)
+      .where(eq(reviews.status, "approved"));
+    const r = rows[0] as any;
+    return { total: Number(r?.count ?? 0), average: Number(r?.avg ?? 0) };
   }
 }
 

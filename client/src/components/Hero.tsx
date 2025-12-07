@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
 import { useLocation } from "wouter";
-import heroBanner from '@assets/generated_images/Hero_banner_Punjab_handicrafts_e3fb83c0.png';
+import heroBanner from '@assets/generated_images/punjab-handicrafts.jpg';
 
 export default function Hero() {
   const [, setLocation] = useLocation();

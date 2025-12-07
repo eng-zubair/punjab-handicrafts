@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Category, Product, Store } from "@shared/schema";
 import Header from "@/components/Header";
@@ -9,12 +9,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle, SheetFooter, SheetClose } from "@/components/ui/sheet";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { SlidersHorizontal, X, Search, AlertCircle } from "lucide-react";
 import bahawalpurImage from '@assets/generated_images/Bahawalpur_Ralli_quilts_display_07a38e65.png';
 import lahoreImage from '@assets/generated_images/Lahore_jewelry_and_embroidery_39a642f1.png';
 import khussaImage from '@assets/generated_images/Handmade_khussa_footwear_product_06baa0d0.png';
 import multanImage from '@assets/generated_images/Multan_blue_pottery_workshop_21555b73.png';
+import { useLocation } from "wouter";
 
 const imagePathMap: Record<string, string> = {
   "/attached_assets/generated_images/Lahore_jewelry_and_embroidery_39a642f1.png": lahoreImage,
@@ -24,6 +26,7 @@ const imagePathMap: Record<string, string> = {
 };
 
 export default function Products() {
+  const [location] = useLocation();
   const [search, setSearch] = useState("");
   const [district, setDistrict] = useState<string>("all");
   const [giBrand, setGiBrand] = useState<string>("all");
@@ -62,6 +65,20 @@ export default function Products() {
     queryKey: ['/api/products', queryParams],
   });
 
+  const productIds = (productsData?.products || []).map(p => p.id);
+  const idsParam = productIds.join(',');
+  const { data: activePromotions = [] } = useQuery<Array<{ productId: string; promotionId: string; type: string; value: string; endAt: string | null }>>({
+    queryKey: ['/api/promotions/active-by-products', { ids: idsParam }],
+    enabled: productIds.length > 0,
+  });
+  const promoMap = useMemo(() => {
+    const m = new Map<string, { type: string; value: string; endAt: string | null }>();
+    for (const item of activePromotions) {
+      if (!m.has(item.productId)) m.set(item.productId, { type: item.type, value: item.value, endAt: item.endAt });
+    }
+    return m;
+  }, [activePromotions]);
+
   const handleResetFilters = () => {
     setSearch("");
     setDistrict("all");
@@ -74,21 +91,150 @@ export default function Products() {
 
   const featuredProducts = productsData?.products.map(product => {
     const normalizedImage = product.images[0] ? (product.images[0].startsWith('/') ? product.images[0] : `/${product.images[0]}`) : '';
+    const promo = promoMap.get(product.id);
+    const priceNum = Number(product.price);
+    let discounted: number | undefined = undefined;
+    let percent = undefined as number | undefined;
+    let tone = undefined as "primary" | "destructive" | "success" | "secondary" | "warning" | undefined;
+    if (promo) {
+      if (promo.type === 'percentage') {
+        const pct = parseFloat(promo.value);
+        discounted = Math.max(0, priceNum * (100 - pct) / 100);
+        percent = pct;
+        tone = "warning";
+      } else if (promo.type === 'fixed') {
+        const val = parseFloat(promo.value);
+        discounted = Math.max(0, priceNum - val);
+        percent = Math.max(0, Math.round((val / Math.max(priceNum, 1)) * 100));
+        tone = "success";
+      } else {
+        percent = undefined;
+        tone = "primary";
+      }
+    }
     return {
       id: product.id,
       title: product.title,
       description: product.description || undefined,
       price: Number(product.price),
+      discountedPrice: discounted,
       image: imagePathMap[normalizedImage] || normalizedImage || multanImage,
       district: product.district,
       giBrand: product.giBrand,
       vendorName: storesData?.find(s => s.id === product.storeId)?.name || "Artisan Vendor",
       storeId: product.storeId,
       stock: product.stock,
+      ratingAverage: (product as any).ratingAverage || 0,
+      ratingCount: (product as any).ratingCount || 0,
+      promotionPercent: percent,
+      promotionTone: tone,
+      promotionEndsAt: promo?.endAt || undefined,
     };
   }) || [];
 
   const giBrands = categoriesData?.map(cat => cat.giBrand) || [];
+
+  useEffect(() => {
+    const qs = location.includes("?") ? location.split("?")[1] : "";
+    const params = new URLSearchParams(qs);
+    const s = params.get("search") || "";
+    const d = params.get("district") || "all";
+    const g = params.get("giBrand") || "all";
+    const min = params.get("minPrice");
+    const max = params.get("maxPrice");
+    setSearch(s);
+    setDistrict(d);
+    setGiBrand(g);
+    setPriceRange([
+      min ? Math.max(0, Math.min(10000, parseInt(min))) : 0,
+      max ? Math.max(0, Math.min(10000, parseInt(max))) : 10000,
+    ]);
+    setPage(1);
+  }, [location]);
+
+  const FiltersForm = () => (
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <label className="text-sm font-medium">Search</label>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Search products..."
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+            className="pl-9"
+            data-testid="input-search"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-sm font-medium">District</label>
+        <Select 
+          value={district} 
+          onValueChange={(value) => {
+            setDistrict(value);
+            setPage(1);
+          }}
+        >
+          <SelectTrigger data-testid="select-district">
+            <SelectValue placeholder="All Districts" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Districts</SelectItem>
+            {categoriesData?.map((cat) => (
+              <SelectItem key={cat.district} value={cat.district}>
+                {cat.district}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-sm font-medium">GI Brand</label>
+        <Select 
+          value={giBrand} 
+          onValueChange={(value) => {
+            setGiBrand(value);
+            setPage(1);
+          }}
+        >
+          <SelectTrigger data-testid="select-gi-brand">
+            <SelectValue placeholder="All Brands" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Brands</SelectItem>
+            {giBrands.map((brand) => (
+              <SelectItem key={brand} value={brand}>
+                {brand}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-3">
+        <label className="text-sm font-medium">
+          Price Range: PKR {priceRange[0]} - {priceRange[1]}
+        </label>
+        <Slider
+          min={0}
+          max={10000}
+          step={100}
+          value={priceRange}
+          onValueChange={(value) => {
+            setPriceRange(value as [number, number]);
+            setPage(1);
+          }}
+          data-testid="slider-price-range"
+        />
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -106,7 +252,7 @@ export default function Products() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            <aside className="lg:col-span-1">
+            <aside className="hidden lg:block lg:col-span-1">
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-4">
                   <CardTitle className="text-lg flex items-center gap-2">
@@ -126,85 +272,7 @@ export default function Products() {
                   )}
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Search</label>
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Search products..."
-                        value={search}
-                        onChange={(e) => {
-                          setSearch(e.target.value);
-                          setPage(1);
-                        }}
-                        className="pl-9"
-                        data-testid="input-search"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">District</label>
-                    <Select 
-                      value={district} 
-                      onValueChange={(value) => {
-                        setDistrict(value);
-                        setPage(1);
-                      }}
-                    >
-                      <SelectTrigger data-testid="select-district">
-                        <SelectValue placeholder="All Districts" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Districts</SelectItem>
-                        {categoriesData?.map((cat) => (
-                          <SelectItem key={cat.district} value={cat.district}>
-                            {cat.district}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">GI Brand</label>
-                    <Select 
-                      value={giBrand} 
-                      onValueChange={(value) => {
-                        setGiBrand(value);
-                        setPage(1);
-                      }}
-                    >
-                      <SelectTrigger data-testid="select-gi-brand">
-                        <SelectValue placeholder="All Brands" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Brands</SelectItem>
-                        {giBrands.map((brand) => (
-                          <SelectItem key={brand} value={brand}>
-                            {brand}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-3">
-                    <label className="text-sm font-medium">
-                      Price Range: PKR {priceRange[0]} - {priceRange[1]}
-                    </label>
-                    <Slider
-                      min={0}
-                      max={10000}
-                      step={100}
-                      value={priceRange}
-                      onValueChange={(value) => {
-                        setPriceRange(value as [number, number]);
-                        setPage(1);
-                      }}
-                      data-testid="slider-price-range"
-                    />
-                  </div>
+                  <FiltersForm />
                 </CardContent>
               </Card>
             </aside>
@@ -214,6 +282,41 @@ export default function Products() {
                 <p className="text-sm text-muted-foreground" data-testid="text-results-count">
                   {productsData?.pagination.total || 0} products found
                 </p>
+                <div className="lg:hidden">
+                  <Sheet>
+                    <SheetTrigger asChild>
+                      <Button variant="outline" size="sm" data-testid="button-open-filters">
+                        <SlidersHorizontal className="w-4 h-4 mr-2" />
+                        Filters
+                      </Button>
+                    </SheetTrigger>
+                    <SheetContent side="bottom">
+                      <SheetHeader>
+                        <SheetTitle>Filters</SheetTitle>
+                      </SheetHeader>
+                      <div className="p-4 space-y-4">
+                        <FiltersForm />
+                        <div className="flex items-center justify-end gap-2">
+                          {hasActiveFilters && (
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              onClick={handleResetFilters}
+                              data-testid="button-reset-filters-mobile"
+                            >
+                              <X className="w-4 h-4 mr-1" />
+                              Reset
+                            </Button>
+                          )}
+                          <SheetClose asChild>
+                            <Button size="sm" data-testid="button-apply-filters">Apply</Button>
+                          </SheetClose>
+                        </div>
+                      </div>
+                      <SheetFooter />
+                    </SheetContent>
+                  </Sheet>
+                </div>
               </div>
 
               {isError ? (

@@ -1,7 +1,7 @@
 import { VendorDashboard } from "./VendorDashboard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2, Package as PackageIcon, Power, Layers, Tag, Calendar, Wand2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Package as PackageIcon, Power, Layers, Tag, Calendar, Wand2, X } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -52,6 +52,7 @@ import { useState, useRef, useEffect } from "react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeImagePath } from "@/lib/utils/image";
+import ProductForm from "@/components/vendor/ProductForm";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -64,111 +65,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 
-const StableFocusInput = ({ 
-  field, 
-  type = 'text', 
-  placeholder, 
-  className,
-  onFocus,
-  onBlur,
-  ...props 
-}: any) => {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const [hasFocus, setHasFocus] = useState(false);
-
-  useEffect(() => {
-    if (hasFocus && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [hasFocus]);
-
-  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-    setHasFocus(true);
-    if (onFocus) onFocus(e);
-  };
-
-  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    setHasFocus(false);
-    if (onBlur) onBlur(e);
-    if (field?.onBlur) field.onBlur(e);
-  };
-
-  const setRef = (el: HTMLInputElement | null) => {
-    inputRef.current = el;
-    if (typeof field?.ref === 'function') {
-      field.ref(el);
-    }
-  };
-
-  return (
-    <Input
-      ref={setRef}
-      type={type}
-      placeholder={placeholder}
-      className={cn('transition-all duration-200', className, {
-        'ring-2 ring-primary ring-offset-2': hasFocus,
-      })}
-      name={field?.name}
-      value={field?.value}
-      onChange={field?.onChange}
-      onFocus={handleFocus}
-      onBlur={handleBlur}
-      {...props}
-    />
-  );
-};
-
-const StableFocusTextarea = ({ 
-  field, 
-  placeholder, 
-  className,
-  onFocus,
-  onBlur,
-  ...props 
-}: any) => {
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const [hasFocus, setHasFocus] = useState(false);
-
-  useEffect(() => {
-    if (hasFocus && textareaRef.current) {
-      textareaRef.current.focus();
-    }
-  }, [hasFocus]);
-
-  const handleFocus = (e: React.FocusEvent<HTMLTextAreaElement>) => {
-    setHasFocus(true);
-    if (onFocus) onFocus(e);
-  };
-
-  const handleBlur = (e: React.FocusEvent<HTMLTextAreaElement>) => {
-    setHasFocus(false);
-    if (onBlur) onBlur(e);
-    if (field?.onBlur) field.onBlur(e);
-  };
-
-  const setRef = (el: HTMLTextAreaElement | null) => {
-    textareaRef.current = el;
-    if (typeof field?.ref === 'function') {
-      field.ref(el);
-    }
-  };
-
-  return (
-    <Textarea
-      ref={setRef}
-      placeholder={placeholder}
-      className={cn('transition-all duration-200', className, {
-        'ring-2 ring-primary ring-offset-2': hasFocus,
-      })}
-      name={field?.name}
-      value={field?.value}
-      onChange={field?.onChange}
-      onFocus={handleFocus}
-      onBlur={handleBlur}
-      {...props}
-    />
-  );
-};
+// Legacy StableFocusInput/StableFocusTextarea removed; new form lives in '@/components/vendor/ProductForm'
 
 type Store = {
   id: string;
@@ -191,6 +88,8 @@ type Product = {
   storeId: string;
   isActive: boolean;
   createdAt: string;
+  category: string;
+  variants: string | null;
 };
 
 type ProductGroup = {
@@ -217,6 +116,24 @@ type Promotion = {
   createdAt: string;
 };
 
+type PromotionWithStats = Promotion & {
+  productCount?: number;
+  lastAddedAt?: string | null;
+  lastRemovedAt?: string | null;
+};
+
+type PromotionProductWithPromotion = {
+  id: string;
+  promotionId: string;
+  productId: string;
+  overridePrice: string | null;
+  quantityLimit: number;
+  conditions?: any;
+  createdAt: string;
+  promotion: Promotion;
+  isActive: boolean;
+};
+
 type Category = {
   id: string;
   district: string;
@@ -224,15 +141,15 @@ type Category = {
   crafts: string[];
 };
 
-const productFormSchema = z.object({
-  title: z.string().min(3, "Title must be at least 3 characters"),
-  description: z.string().min(10, "Description must be at least 10 characters"),
-  price: z.string().refine((val) => !isNaN(Number(val)) && Number(val) > 0, "Price must be a positive number"),
-  stock: z.string().refine((val) => !isNaN(Number(val)) && Number(val) >= 0, "Stock must be a non-negative number"),
-  district: z.string().min(1, "Please select a district"),
-  giBrand: z.string().min(1, "Please select a GI brand"),
-  images: z.string().optional(), // Will store uploaded image paths as JSON string
-});
+type ProductCategory = {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  createdAt?: string;
+};
+
+// Product form schema removed; see '@/components/vendor/ProductForm'
 
 const groupFormSchema = z.object({
   name: z.string().min(3, "Name must be at least 3 characters"),
@@ -251,7 +168,6 @@ const promotionFormSchema = z.object({
   endAt: z.date().optional(),
 });
 
-type ProductFormValues = z.infer<typeof productFormSchema>;
 type GroupFormValues = z.infer<typeof groupFormSchema>;
 type PromotionFormValues = z.infer<typeof promotionFormSchema>;
 
@@ -263,8 +179,7 @@ export default function VendorProducts() {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [uploadedImages, setUploadedImages] = useState<string[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
+  
   
 
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
@@ -293,22 +208,112 @@ export default function VendorProducts() {
     queryKey: ['/api/vendor/groups'],
   });
 
-  const { data: promotions = [], isLoading: promotionsLoading } = useQuery<Promotion[]>({
+  const { data: promotions = [], isLoading: promotionsLoading } = useQuery<PromotionWithStats[]>({
     queryKey: ['/api/vendor/promotions'],
   });
 
+  const { data: promotionProducts = [] } = useQuery<PromotionProductWithPromotion[]>({
+    queryKey: ['/api/vendor/promotion-products'],
+  });
+
+  const { data: adminProductCategories = [] } = useQuery<ProductCategory[]>({
+    queryKey: ['/api/product-categories'],
+  });
+
   const store = stores[0];
+  const [attachDialogOpen, setAttachDialogOpen] = useState(false);
+  const [selectedAttachPromotion, setSelectedAttachPromotion] = useState<Promotion | null>(null);
+  const [productSearch, setProductSearch] = useState("");
+  const [filterApprovedOnly, setFilterApprovedOnly] = useState(true);
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [selectionDetails, setSelectionDetails] = useState<Record<string, { quantityLimit: number; overridePrice?: string }>>({});
+
+  const filteredAttachProducts = vendorProducts.filter(p => {
+    const matchesSearch = productSearch.trim().length === 0 || p.title.toLowerCase().includes(productSearch.toLowerCase());
+    const statusOk = !filterApprovedOnly || p.status === 'approved';
+    return matchesSearch && statusOk && p.storeId === store?.id;
+  });
+
+  const toggleSelectedProduct = (id: string, checked: boolean) => {
+    setSelectedProductIds(prev => checked ? [...prev, id] : prev.filter(x => x !== id));
+    setSelectionDetails(prev => {
+      if (!checked) {
+        const { [id]: _, ...rest } = prev as any;
+        return rest;
+      }
+      const current = prev[id] || { quantityLimit: 0 };
+      let overridePrice = current.overridePrice;
+      const p = vendorProducts.find(x => x.id === id);
+      if (p && selectedAttachPromotion && selectedAttachPromotion.type === 'percentage') {
+        const priceNum = parseFloat(String(p.price));
+        const pct = parseFloat(String(selectedAttachPromotion.value));
+        const discounted = Math.max(0, priceNum * (100 - pct) / 100);
+        overridePrice = discounted.toFixed(2);
+      }
+      return { ...prev, [id]: { quantityLimit: current.quantityLimit, overridePrice } };
+    });
+  };
+
+  const updateSelectionDetail = (id: string, field: 'quantityLimit' | 'overridePrice', value: string) => {
+    setSelectionDetails(prev => ({
+      ...prev,
+      [id]: {
+        quantityLimit: field === 'quantityLimit' ? Math.max(0, parseInt(value || '0')) : (prev[id]?.quantityLimit || 0),
+        overridePrice: field === 'overridePrice' ? (value || undefined) : prev[id]?.overridePrice,
+      }
+    }));
+  };
+
+  const addProductsToPromotionMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedAttachPromotion) throw new Error('No promotion selected');
+      const items = selectedProductIds.map(pid => ({
+        productId: pid,
+        quantityLimit: selectionDetails[pid]?.quantityLimit || 0,
+        overridePrice: selectionDetails[pid]?.overridePrice || undefined,
+      }));
+      return apiRequest('POST', `/api/vendor/promotions/${selectedAttachPromotion.id}/products/bulk`, { items });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/promotions'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/promotion-products'] });
+      setAttachDialogOpen(false);
+      setSelectedAttachPromotion(null);
+      setSelectedProductIds([]);
+      setSelectionDetails({});
+      setProductSearch("");
+      toast({ title: 'Products added', description: 'Selected products have been added to the promotion' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    }
+  });
   
   const filteredProducts = vendorProducts.filter(p => {
     if (activeTab === "all") return true;
     return p.status === activeTab;
   });
 
+  const [promotionFilter, setPromotionFilter] = useState<'all' | 'in' | 'out'>('all');
+
+  const activePromosByProduct = new Map<string, PromotionProductWithPromotion[]>();
+  for (const pp of promotionProducts) {
+    if (pp.isActive) {
+      const arr = activePromosByProduct.get(pp.productId) || [];
+      arr.push(pp);
+      activePromosByProduct.set(pp.productId, arr);
+    }
+  }
+
+  const filteredByPromotion = filteredProducts.filter(p => {
+    if (promotionFilter === 'all') return true;
+    const hasActive = (activePromosByProduct.get(p.id) || []).length > 0;
+    return promotionFilter === 'in' ? hasActive : !hasActive;
+  });
+
   
 
-  const editForm = useForm<ProductFormValues>({
-    resolver: zodResolver(productFormSchema),
-  });
+  
 
   const groupForm = useForm<GroupFormValues>({
     resolver: zodResolver(groupFormSchema),
@@ -337,71 +342,11 @@ export default function VendorProducts() {
     resolver: zodResolver(promotionFormSchema),
   });
 
-  const createProductMutation = useMutation({
-    mutationFn: async (data: ProductFormValues) => {
-      if (!store) throw new Error("No store found");
-      if (uploadedImages.length === 0) {
-        throw new Error("Please upload at least one image");
-      }
-      return apiRequest('POST', '/api/products', {
-        ...data,
-        storeId: store.id,
-        price: data.price,
-        stock: parseInt(data.stock),
-        images: uploadedImages,
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/vendor/products'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/vendor/analytics'] });
-      setAddProductDialogOpen(false);
-      setUploadedImages([]);
-      toast({
-        title: "Product added",
-        description: "Your product has been submitted for approval",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
+  
 
   
 
-  const updateProductMutation = useMutation({
-    mutationFn: async (data: ProductFormValues & { id: string }) => {
-      const { id, ...updateData } = data;
-      // Use uploaded images if available, otherwise keep existing images
-      const images = uploadedImages.length > 0 ? uploadedImages : selectedProduct?.images || [];
-      return apiRequest('PATCH', `/api/vendor/products/${id}`, {
-        ...updateData,
-        price: updateData.price,
-        stock: parseInt(updateData.stock),
-        images,
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/vendor/products'] });
-      setEditDialogOpen(false);
-      setSelectedProduct(null);
-      setUploadedImages([]);
-      toast({
-        title: "Product updated",
-        description: "Your product has been updated successfully",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
+  
 
   const deleteProductMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -427,8 +372,8 @@ export default function VendorProducts() {
   });
 
   const toggleActiveMutation = useMutation({
-    mutationFn: async (id: string) => {
-      return apiRequest('PATCH', `/api/vendor/products/${id}/toggle-active`, {});
+    mutationFn: async ({ id, isActive }: { id: string; isActive: boolean }) => {
+      return apiRequest('PATCH', `/api/vendor/products/${id}/toggle-active`, { isActive });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/vendor/products'] });
@@ -604,17 +549,6 @@ export default function VendorProducts() {
 
   const handleEditProduct = (product: Product) => {
     setSelectedProduct(product);
-    editForm.reset({
-      title: product.title,
-      description: product.description || "",
-      price: product.price,
-      stock: product.stock.toString(),
-      district: product.district,
-      giBrand: product.giBrand,
-      images: "",
-    });
-    // Show existing product images in preview
-    setUploadedImages(product.images || []);
     setEditDialogOpen(true);
   };
 
@@ -625,7 +559,6 @@ export default function VendorProducts() {
       setEditDialogOpen(false);
       setSelectedProduct(null);
     }
-    setUploadedImages([]);
   };
 
   
@@ -635,43 +568,7 @@ export default function VendorProducts() {
     setDeleteDialogOpen(true);
   };
 
-  const handleImageUpload = async (files: FileList | null) => {
-    if (!files || files.length === 0 || !store) return;
-
-    setIsUploading(true);
-    try {
-      const formData = new FormData();
-      Array.from(files).forEach(file => {
-        formData.append('images', file);
-      });
-
-      const response = await fetch(`/api/upload/product-images?storeId=${store.id}`, {
-        method: 'POST',
-        credentials: 'include',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Failed to upload images');
-      }
-
-      const data = await response.json();
-      setUploadedImages(data.images);
-      toast({
-        title: "Images uploaded",
-        description: `Successfully uploaded ${data.images.length} image(s)`,
-      });
-    } catch (error: any) {
-      toast({
-        title: "Upload failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsUploading(false);
-    }
-  };
+  // Image upload handled inside ProductForm component
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -686,182 +583,7 @@ export default function VendorProducts() {
     }
   };
 
-  const ProductFormFields = ({ form }: { form: ReturnType<typeof useForm<ProductFormValues>> }) => (
-    <>
-      <FormField
-        control={form.control}
-        name="title"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>Product Title</FormLabel>
-            <FormControl>
-              <StableFocusInput
-                field={field}
-                placeholder="Handwoven Basket"
-                data-testid="input-product-title"
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-
-      <FormField
-        control={form.control}
-        name="description"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>Description</FormLabel>
-            <FormControl>
-              <StableFocusTextarea 
-                field={field}
-                placeholder="Describe your product..."
-                className="min-h-24"
-                data-testid="input-product-description"
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-
-      <div className="grid grid-cols-2 gap-4">
-        <FormField
-          control={form.control}
-          name="price"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Price (PKR)</FormLabel>
-              <FormControl>
-                <StableFocusInput 
-                  field={field}
-                  type="number" 
-                  placeholder="1500" 
-                  data-testid="input-product-price" 
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={form.control}
-          name="stock"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Stock</FormLabel>
-              <FormControl>
-                <StableFocusInput 
-                  field={field}
-                  type="number" 
-                  placeholder="10" 
-                  data-testid="input-product-stock" 
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      </div>
-
-      <FormField
-        control={form.control}
-        name="district"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>District</FormLabel>
-            <Select onValueChange={field.onChange} value={field.value}>
-              <FormControl>
-                <SelectTrigger data-testid="select-product-district">
-                  <SelectValue placeholder="Select district" />
-                </SelectTrigger>
-              </FormControl>
-              <SelectContent>
-                {categories.map((cat) => (
-                  <SelectItem key={cat.district} value={cat.district}>
-                    {cat.district}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-
-      <FormField
-        control={form.control}
-        name="giBrand"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>GI Brand</FormLabel>
-            <Select onValueChange={field.onChange} value={field.value}>
-              <FormControl>
-                <SelectTrigger data-testid="select-product-gi-brand">
-                  <SelectValue placeholder="Select GI brand" />
-                </SelectTrigger>
-              </FormControl>
-              <SelectContent>
-                {categories.map((cat) => (
-                  <SelectItem key={cat.giBrand} value={cat.giBrand}>
-                    {cat.giBrand}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <FormDescription>
-              Geographical Indication certified brand
-            </FormDescription>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-
-      <FormField
-        control={form.control}
-        name="images"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>Product Images</FormLabel>
-            <FormControl>
-              <div className="space-y-4">
-                <Input 
-                  type="file" 
-                  accept="image/jpeg,image/jpg,image/png,image/webp"
-                  multiple
-                  max={5}
-                  onChange={(e) => handleImageUpload(e.target.files)}
-                  disabled={isUploading}
-                  data-testid="input-product-images"
-                />
-                {isUploading && (
-                  <p className="text-sm text-muted-foreground">Uploading images...</p>
-                )}
-                {uploadedImages.length > 0 && (
-                  <div className="flex gap-2 flex-wrap">
-                    {uploadedImages.map((img, index) => (
-                      <div key={index} className="relative w-20 h-20 rounded border">
-                        <img 
-                          src={normalizeImagePath(img)} 
-                          alt={`Product ${index + 1}`}
-                          className="w-full h-full object-cover rounded"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </FormControl>
-            <FormDescription>
-              Upload up to 5 images (JPEG, PNG, WebP). Max 5MB per image.
-            </FormDescription>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-    </>
-  );
+  // Legacy ProductFormFields removed; new implementation in '@/components/vendor/ProductForm'
 
   if (!store) {
     return (
@@ -917,7 +639,7 @@ export default function VendorProducts() {
                 if (!open) handleDialogClose('add');
               }}>
                 <DialogTrigger asChild>
-                  <Button variant="outline" data-testid="button-add-product">
+                  <Button variant="default" data-testid="button-add-product">
                     <Plus className="w-4 h-4 mr-2" />
                     Add Product
                   </Button>
@@ -929,130 +651,15 @@ export default function VendorProducts() {
                       Create a new product for your store catalog
                     </DialogDescription>
                   </DialogHeader>
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      const formEl = e.currentTarget as HTMLFormElement & any;
-                      const formData: ProductFormValues = {
-                        title: formEl.title.value,
-                        description: formEl.description.value,
-                        price: formEl.price.value,
-                        stock: formEl.stock.value,
-                        district: formEl.district.value,
-                        giBrand: formEl.giBrand.value,
-                        images: "",
-                      };
-                      createProductMutation.mutate(formData);
-                    }}
-                    className="space-y-4"
-                  >
-                    <div className="space-y-2">
-                      <label htmlFor="title" className="text-sm font-medium">Product Title</label>
-                      <Input id="title" name="title" placeholder="Handwoven Basket" data-testid="input-product-title" />
-                    </div>
-
-                    <div className="space-y-2">
-                      <label htmlFor="description" className="text-sm font-medium">Description</label>
-                      <Textarea id="description" name="description" placeholder="Describe your product..." className="min-h-24" data-testid="input-product-description" />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label htmlFor="price" className="text-sm font-medium">Price (PKR)</label>
-                        <Input id="price" name="price" type="number" placeholder="1500" data-testid="input-product-price" />
-                      </div>
-                      <div className="space-y-2">
-                        <label htmlFor="stock" className="text-sm font-medium">Stock</label>
-                        <Input id="stock" name="stock" type="number" placeholder="10" data-testid="input-product-stock" />
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">District</label>
-                      <Select defaultValue={store?.district || ""} onValueChange={(val) => {
-                        const el = document.getElementById('district') as HTMLInputElement | null;
-                        if (el) el.value = val;
-                      }}>
-                        <SelectTrigger data-testid="select-product-district">
-                          <SelectValue placeholder="Select district" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {categories.map((cat) => (
-                            <SelectItem key={cat.district} value={cat.district}>
-                              {cat.district}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <input id="district" name="district" type="hidden" defaultValue={store?.district || ""} />
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">GI Brand</label>
-                      <Select defaultValue={store?.giBrands?.[0] || ""} onValueChange={(val) => {
-                        const el = document.getElementById('giBrand') as HTMLInputElement | null;
-                        if (el) el.value = val;
-                      }}>
-                        <SelectTrigger data-testid="select-product-gi-brand">
-                          <SelectValue placeholder="Select GI brand" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {categories.map((cat) => (
-                            <SelectItem key={cat.giBrand} value={cat.giBrand}>
-                              {cat.giBrand}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <input id="giBrand" name="giBrand" type="hidden" defaultValue={store?.giBrands?.[0] || ""} />
-                      <p className="text-sm text-muted-foreground">Geographical Indication certified brand</p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Product Images</label>
-                      <div className="space-y-4">
-                        <Input 
-                          type="file" 
-                          accept="image/jpeg,image/jpg,image/png,image/webp"
-                          multiple
-                          onChange={(e) => handleImageUpload(e.target.files)}
-                          disabled={isUploading}
-                          data-testid="input-product-images"
-                        />
-                        {isUploading && (
-                          <p className="text-sm text-muted-foreground">Uploading images...</p>
-                        )}
-                        {uploadedImages.length > 0 && (
-                          <div className="flex gap-2 flex-wrap">
-                            {uploadedImages.map((img, index) => (
-                              <div key={index} className="relative w-20 h-20 rounded border">
-                                <img 
-                                  src={normalizeImagePath(img)} 
-                                  alt={`Product ${index + 1}`}
-                                  className="w-full h-full object-cover rounded"
-                                />
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <p className="text-sm text-muted-foreground">Upload up to 5 images (JPEG, PNG, WebP). Max 5MB per image.</p>
-                      </div>
-                    </div>
-
-                    <DialogFooter>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setAddProductDialogOpen(false)}
-                        data-testid="button-cancel-add"
-                      >
-                        Cancel
-                      </Button>
-                      <Button type="submit" disabled={createProductMutation.isPending} data-testid="button-submit-add">
-                        {createProductMutation.isPending ? "Adding..." : "Add Product"}
-                      </Button>
-                    </DialogFooter>
-                  </form>
+                  <ProductForm
+                    mode="create"
+                    store={store}
+                    categories={categories}
+                    productCategories={adminProductCategories}
+                    submitText="Create Product"
+                    onCancel={() => setAddProductDialogOpen(false)}
+                    onSuccess={() => setAddProductDialogOpen(false)}
+                  />
                 </DialogContent>
               </Dialog>
             </div>
@@ -1107,7 +714,7 @@ export default function VendorProducts() {
           <TabsContent value={activeTab} className="mt-6">
             {isLoading ? (
               <p className="text-muted-foreground">Loading products...</p>
-            ) : filteredProducts.length === 0 ? (
+            ) : filteredByPromotion.length === 0 ? (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -1128,20 +735,38 @@ export default function VendorProducts() {
               </Card>
             ) : (
               <Card>
-                <Table>
+                <div className="flex items-center justify-end px-4 pt-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">Promotion</span>
+                    <Select value={promotionFilter} onValueChange={(v) => setPromotionFilter(v as any)}>
+                      <SelectTrigger className="w-[180px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All</SelectItem>
+                        <SelectItem value="in">In Promotion</SelectItem>
+                        <SelectItem value="out">Not In Promotion</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                <Table className="min-w-[900px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-20">Image</TableHead>
                       <TableHead>Product</TableHead>
+                      <TableHead>Category</TableHead>
                       <TableHead>Price</TableHead>
                       <TableHead>Stock</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Promotion</TableHead>
                       <TableHead>Active</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredProducts.map((product) => (
+                    {filteredByPromotion.map((product) => (
                       <TableRow key={product.id} data-testid={`row-product-${product.id}`}>
                         <TableCell>
                           <div className="w-16 h-16 rounded bg-muted overflow-hidden">
@@ -1166,7 +791,23 @@ export default function VendorProducts() {
                             <Badge variant="outline" className="text-xs" data-testid={`badge-product-gi-${product.id}`}>
                               {product.giBrand}
                             </Badge>
+                            {(() => {
+                              try {
+                                const variants = product.variants ? (typeof product.variants === 'string' ? JSON.parse(product.variants) : product.variants) : [];
+                                if (variants.length > 0) {
+                                  return (
+                                    <Badge variant="secondary" className="text-xs ml-2">
+                                      {variants.length} Variants
+                                    </Badge>
+                                  );
+                                }
+                              } catch (e) {}
+                              return null;
+                            })()}
                           </div>
+                        </TableCell>
+                        <TableCell>
+                          {product.category || "Other"}
                         </TableCell>
                         <TableCell>
                           <span className="font-semibold" data-testid={`text-product-price-${product.id}`}>
@@ -1180,15 +821,39 @@ export default function VendorProducts() {
                           {getStatusBadge(product.status)}
                         </TableCell>
                         <TableCell>
+                          {(() => {
+                            const aps = activePromosByProduct.get(product.id) || [];
+                            if (aps.length === 0) {
+                              return <Badge variant="secondary">None</Badge>;
+                            }
+                            const p = aps[0].promotion;
+                            const label = p.type === 'percentage' ? `${p.value}% off` : p.type === 'fixed' ? `PKR ${p.value} off` : 'BOGO';
+                            const ends = p.endAt ? new Date(p.endAt).getTime() : null;
+                            let countdown = '';
+                            if (ends) {
+                              const diff = Math.max(0, ends - Date.now());
+                              const d = Math.floor(diff / (1000 * 60 * 60 * 24));
+                              const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                              countdown = d > 0 ? `${d}d ${h}h` : `${h}h`;
+                            }
+                            return (
+                              <div className="flex items-center gap-2">
+                                <Badge>{label}</Badge>
+                                {countdown && <span className="text-xs text-muted-foreground">ends in {countdown}</span>}
+                              </div>
+                            );
+                          })()}
+                        </TableCell>
+                        <TableCell>
                           <Switch
                             checked={product.isActive}
-                            onCheckedChange={() => toggleActiveMutation.mutate(product.id)}
+                            onCheckedChange={(checked) => toggleActiveMutation.mutate({ id: product.id, isActive: checked })}
                             disabled={toggleActiveMutation.isPending}
                             data-testid={`switch-active-${product.id}`}
                           />
                         </TableCell>
                         <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
+                      <div className="flex justify-end gap-2">
                             <Button
                               size="sm"
                               variant="outline"
@@ -1211,6 +876,7 @@ export default function VendorProducts() {
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               </Card>
             )}
           </TabsContent>
@@ -1237,7 +903,8 @@ export default function VendorProducts() {
               </Card>
             ) : (
               <Card>
-                <Table>
+                <div className="overflow-x-auto">
+                <Table className="min-w-[700px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
@@ -1287,6 +954,7 @@ export default function VendorProducts() {
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               </Card>
             )}
           </TabsContent>
@@ -1311,7 +979,8 @@ export default function VendorProducts() {
               </Card>
             ) : (
               <Card>
-                <Table>
+                <div className="overflow-x-auto">
+                <Table className="min-w-[900px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
@@ -1319,6 +988,7 @@ export default function VendorProducts() {
                       <TableHead>Value</TableHead>
                       <TableHead>Applies To</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Products</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1340,8 +1010,23 @@ export default function VendorProducts() {
                             {promo.status}
                           </Badge>
                         </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-medium">{promo.productCount || 0}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {promo.lastAddedAt ? new Date(promo.lastAddedAt).toLocaleDateString() : ''}
+                            </span>
+                          </div>
+                        </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              onClick={() => { setSelectedAttachPromotion(promo); setAttachDialogOpen(true); }}
+                              data-testid={`button-attach-products-${promo.id}`}
+                            >
+                              Add Products
+                            </Button>
                             <Button
                               size="sm"
                               variant="outline"
@@ -1381,6 +1066,7 @@ export default function VendorProducts() {
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               </Card>
             )}
           </TabsContent>
@@ -1398,29 +1084,16 @@ export default function VendorProducts() {
                 Update your product details
               </DialogDescription>
             </DialogHeader>
-            <Form {...editForm}>
-              <form
-                onSubmit={editForm.handleSubmit((data) =>
-                  selectedProduct && updateProductMutation.mutate({ ...data, id: selectedProduct.id })
-                )}
-                className="space-y-4"
-              >
-                <ProductFormFields form={editForm} />
-                <DialogFooter>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setEditDialogOpen(false)}
-                    data-testid="button-cancel-edit"
-                  >
-                    Cancel
-                  </Button>
-                  <Button type="submit" disabled={updateProductMutation.isPending} data-testid="button-submit-edit">
-                    {updateProductMutation.isPending ? "Updating..." : "Update Product"}
-                  </Button>
-                </DialogFooter>
-              </form>
-            </Form>
+            {selectedProduct && (
+              <ProductForm
+                mode="edit"
+                store={store}
+                categories={categories}
+                product={selectedProduct}
+                onCancel={() => setEditDialogOpen(false)}
+                onSuccess={() => handleDialogClose('edit')}
+              />
+            )}
           </DialogContent>
         </Dialog>
 
@@ -1799,7 +1472,121 @@ export default function VendorProducts() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-
+        {/* Attach Products to Promotion Dialog */}
+        <Dialog open={attachDialogOpen} onOpenChange={setAttachDialogOpen}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Add Products to Promotion</DialogTitle>
+              <DialogDescription>Select products and configure per-product options</DialogDescription>
+            </DialogHeader>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div>
+                <div className="flex items-center gap-3 mb-4">
+                  <Input placeholder="Search products" value={productSearch} onChange={(e) => setProductSearch(e.target.value)} data-testid="input-search-products" />
+                  <div className="flex items-center gap-2">
+                    <Checkbox id="approved-only" checked={filterApprovedOnly} onCheckedChange={(v) => setFilterApprovedOnly(Boolean(v))} />
+                    <label htmlFor="approved-only" className="text-sm">Approved only</label>
+                  </div>
+                </div>
+                <div className="border rounded-md overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[64px]" />
+                        <TableHead className="w-10" />
+                        <TableHead>Product</TableHead>
+                        <TableHead>Stock</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredAttachProducts.map(p => {
+                        const invalid = p.stock <= 0 || p.status !== 'approved';
+                        const checked = selectedProductIds.includes(p.id);
+                        return (
+                          <TableRow key={p.id} className={cn({ 'opacity-60': invalid })}>
+                            <TableCell>
+                              <img
+                                src={normalizeImagePath(p.images?.[0] || '')}
+                                alt={p.title}
+                                className="h-12 w-12 object-cover rounded bg-muted"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Checkbox
+                                checked={checked}
+                                disabled={invalid}
+                                onCheckedChange={(v) => toggleSelectedProduct(p.id, Boolean(v))}
+                                data-testid={`checkbox-select-product-${p.id}`}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <div className="space-y-1">
+                                <p className="font-medium">{p.title}</p>
+                                <Badge variant="outline" className="text-xs">{p.giBrand}</Badge>
+                              </div>
+                            </TableCell>
+                            <TableCell>{p.stock}</TableCell>
+                            <TableCell>
+                              <Badge variant={p.status === 'approved' ? 'default' : 'secondary'}>{p.status}</Badge>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+              <div>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Selected Products</CardTitle>
+                    <CardDescription>Configure per-product options</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {selectedProductIds.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No products selected</p>
+                    ) : (
+                      <div className="space-y-4">
+                        {selectedProductIds.map(pid => {
+                          const p = vendorProducts.find(x => x.id === pid)!;
+                          const s = selectionDetails[pid] || { quantityLimit: 0 };
+                          return (
+                            <div key={pid} className="border rounded p-3">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="font-medium">{p.title}</p>
+                                  <p className="text-xs text-muted-foreground">Stock: {p.stock}</p>
+                                </div>
+                                <Button size="sm" variant="destructive" onClick={() => toggleSelectedProduct(pid, false)} data-testid={`button-remove-selected-${pid}`}>Remove</Button>
+                              </div>
+                              <div className="grid grid-cols-2 gap-3 mt-3">
+                                <div>
+                                  <label className="text-sm">Quantity Limit</label>
+                                  <Input type="number" min={0} value={s.quantityLimit} onChange={(e) => updateSelectionDetail(pid, 'quantityLimit', e.target.value)} data-testid={`input-quantity-limit-${pid}`} />
+                                </div>
+                                <div>
+                                  <label className="text-sm">Override Price (PKR)</label>
+                                  <Input type="number" min={0} value={s.overridePrice || ''} onChange={(e) => updateSelectionDetail(pid, 'overridePrice', e.target.value)} data-testid={`input-override-price-${pid}`} />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setAttachDialogOpen(false)} data-testid="button-cancel-attach">Cancel</Button>
+              <Button onClick={() => addProductsToPromotionMutation.mutate()} disabled={addProductsToPromotionMutation.isPending || selectedProductIds.length === 0} data-testid="button-submit-attach">
+                {addProductsToPromotionMutation.isPending ? 'Adding...' : 'Add to Promotion'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         
       </div>
     </VendorDashboard>

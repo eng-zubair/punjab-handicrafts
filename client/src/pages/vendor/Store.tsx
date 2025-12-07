@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, Store as StoreIcon, CheckCircle2, Clock } from "lucide-react";
+import { AlertCircle, Store as StoreIcon, CheckCircle2, Clock, Lock } from "lucide-react";
 import {
   Form,
   FormControl,
@@ -15,6 +15,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -26,6 +27,7 @@ import {
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { registerSchema } from "@shared/schema";
 import { useState } from "react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -61,6 +63,8 @@ type StoreFormValues = z.infer<typeof storeFormSchema>;
 export default function VendorStore() {
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
 
   const { data: stores = [], isLoading: loadingStores } = useQuery<Store[]>({
     queryKey: ['/api/vendor/stores'],
@@ -123,6 +127,25 @@ export default function VendorStore() {
         description: error.message,
         variant: "destructive",
       });
+    },
+  });
+
+  const changePasswordMutation = useMutation({
+    mutationFn: async () => {
+      const valid = registerSchema.shape.password.safeParse(newPassword);
+      if (!valid.success) {
+        throw new Error("Password must be at least 8 chars with upper, lower, number");
+      }
+      const res = await apiRequest("POST", "/api/buyer/password", { currentPassword, newPassword });
+      return res.json();
+    },
+    onSuccess: () => {
+      setCurrentPassword("");
+      setNewPassword("");
+      toast({ title: "Password updated" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     },
   });
 
@@ -441,6 +464,47 @@ export default function VendorStore() {
                 </div>
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Lock className="w-5 h-5" />
+              Account Security
+            </CardTitle>
+            <CardDescription>Change your account password</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="input-vendor-current-password">Current Password</Label>
+              <Input
+                id="input-vendor-current-password"
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder="••••••••"
+                data-testid="input-vendor-current-password"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="input-vendor-new-password">New Password</Label>
+              <Input
+                id="input-vendor-new-password"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="••••••••"
+                data-testid="input-vendor-new-password"
+              />
+            </div>
+            <Button
+              onClick={() => changePasswordMutation.mutate()}
+              disabled={changePasswordMutation.isPending || !currentPassword || !newPassword}
+              data-testid="button-vendor-change-password"
+            >
+              Change Password
+            </Button>
           </CardContent>
         </Card>
       </div>

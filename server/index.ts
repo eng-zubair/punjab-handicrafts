@@ -1,7 +1,8 @@
+import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { initializeDefaultAdmin } from "./init";
+import { initializeDefaultAdmin, initializeOrderSchema } from "./init";
 
 const app = express();
 
@@ -16,6 +17,30 @@ app.use(express.json({
   }
 }));
 app.use(express.urlencoded({ extended: false }));
+
+// Content Security Policy
+app.use((req, res, next) => {
+  const isDev = app.get("env") === "development";
+  const cspParts = [
+    "default-src 'self'",
+    // In dev, allow inline scripts for Vite's React Fast Refresh preamble
+    isDev
+      ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'"
+      : "script-src 'self'",
+    // Allow inline styles from Tailwind and Google Fonts stylesheets
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    // Allow Google Fonts
+    "font-src 'self' https://fonts.gstatic.com",
+    // Allow images from self and data/blob URLs
+    "img-src 'self' data: blob:",
+    // Permit HMR websocket in development
+    isDev ? "connect-src 'self' ws:" : "connect-src 'self'",
+    // Frames none
+    "frame-ancestors 'none'",
+  ];
+  res.setHeader("Content-Security-Policy", cspParts.join("; "));
+  next();
+});
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -67,7 +92,8 @@ app.use((req, res, next) => {
     serveStatic(app);
   }
 
-  // Initialize default admin account
+  // Ensure DB schema before any storage reads, then initialize default admin
+  await initializeOrderSchema();
   await initializeDefaultAdmin();
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
@@ -75,10 +101,10 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
+  log('Server restarting with v2 endpoint...');
   server.listen({
     port,
-    host: "0.0.0.0",
-    reusePort: true,
+    host: "127.0.0.1",
   }, () => {
     log(`serving on port ${port}`);
   });

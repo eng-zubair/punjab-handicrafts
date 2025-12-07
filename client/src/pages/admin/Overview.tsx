@@ -10,6 +10,7 @@ interface AnalyticsData {
   totalProducts: number;
   totalOrders: number;
   totalRevenue: number;
+  receivedOrdersValue: number;
   pendingStores: number;
   pendingProducts: number;
 }
@@ -17,6 +18,8 @@ interface AnalyticsData {
 export default function AdminOverview() {
   const { data: analytics, isLoading } = useQuery<AnalyticsData>({
     queryKey: ['/api/admin/analytics'],
+    refetchInterval: 5000,
+    refetchOnWindowFocus: true,
   });
 
   if (isLoading) {
@@ -101,7 +104,7 @@ export default function AdminOverview() {
               <div className="text-2xl font-bold" data-testid="metric-total-revenue">
                 PKR {analytics?.totalRevenue?.toLocaleString() || 0}
               </div>
-              <p className="text-xs text-muted-foreground">Platform lifetime revenue</p>
+              <p className="text-xs text-muted-foreground">Delivered orders revenue</p>
             </CardContent>
           </Card>
 
@@ -125,6 +128,21 @@ export default function AdminOverview() {
                   <p className="text-xs text-muted-foreground">Products</p>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Received Orders Value</CardTitle>
+              <ShoppingCart className="w-4 h-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold" data-testid="metric-received-orders-value">
+                PKR {analytics?.receivedOrdersValue?.toLocaleString() || 0}
+              </div>
+              <p className="text-xs text-muted-foreground">Pending, Processing and Shipped</p>
             </CardContent>
           </Card>
         </div>

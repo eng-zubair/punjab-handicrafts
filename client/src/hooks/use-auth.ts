@@ -1,8 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { User, LoginInput, RegisterInput } from "@shared/schema";
+import { useLocation } from "wouter";
 
 export function useAuth() {
+  const [, setLocation] = useLocation();
   const { data: user, isLoading } = useQuery<User | null>({
     queryKey: ["/api/auth/user"],
     retry: false,
@@ -14,8 +16,16 @@ export function useAuth() {
       const response = await apiRequest("POST", "/api/auth/login", credentials);
       return response;
     },
-    onSuccess: () => {
+    onSuccess: async (res: Response) => {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      try {
+        const u: User = await res.json();
+        if (u?.role === "admin") {
+          setLocation("/admin/dashboard");
+        } else if (u?.role === "vendor") {
+          setLocation("/vendor/dashboard");
+        }
+      } catch {}
     },
   });
 

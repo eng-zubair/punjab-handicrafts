@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { registerSchema, loginSchema, type RegisterInput, type LoginInput } from "@shared/schema";
@@ -22,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { Eye, EyeOff } from "lucide-react";
 
 interface AuthDialogProps {
   open: boolean;
@@ -33,6 +35,9 @@ export function AuthDialog({ open, onOpenChange, defaultTab = "login" }: AuthDia
   const [activeTab, setActiveTab] = useState(defaultTab);
   const { login, register, isLoggingIn, isRegistering, loginError, registerError } = useAuth();
   const { toast } = useToast();
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
+  const [, setLocation] = useLocation();
 
   const loginForm = useForm<LoginInput>({
     resolver: zodResolver(loginSchema),
@@ -54,7 +59,15 @@ export function AuthDialog({ open, onOpenChange, defaultTab = "login" }: AuthDia
 
   const handleLogin = (data: LoginInput) => {
     login(data, {
-      onSuccess: () => {
+      onSuccess: async (res: Response) => {
+        try {
+          const u = await res.json();
+          if (u?.role === "admin") {
+            setLocation("/admin/dashboard");
+          } else if (u?.role === "vendor") {
+            setLocation("/vendor/dashboard");
+          }
+        } catch {}
         toast({
           title: "Welcome back!",
           description: "You have successfully logged in.",
@@ -137,12 +150,23 @@ export function AuthDialog({ open, onOpenChange, defaultTab = "login" }: AuthDia
                     <FormItem>
                       <FormLabel>Password</FormLabel>
                       <FormControl>
-                        <Input
-                          type="password"
-                          placeholder="••••••••"
-                          data-testid="input-login-password"
-                          {...field}
-                        />
+                        <div className="relative">
+                          <Input
+                            type={showLoginPassword ? "text" : "password"}
+                            placeholder="••••••••"
+                            data-testid="input-login-password"
+                            {...field}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowLoginPassword((v) => !v)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground"
+                            aria-label="Toggle password visibility"
+                            data-testid="toggle-login-password"
+                          >
+                            {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -228,12 +252,23 @@ export function AuthDialog({ open, onOpenChange, defaultTab = "login" }: AuthDia
                     <FormItem>
                       <FormLabel>Password</FormLabel>
                       <FormControl>
-                        <Input
-                          type="password"
-                          placeholder="••••••••"
-                          data-testid="input-register-password"
-                          {...field}
-                        />
+                        <div className="relative">
+                          <Input
+                            type={showRegisterPassword ? "text" : "password"}
+                            placeholder="••••••••"
+                            data-testid="input-register-password"
+                            {...field}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowRegisterPassword((v) => !v)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground"
+                            aria-label="Toggle password visibility"
+                            data-testid="toggle-register-password"
+                          >
+                            {showRegisterPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
                       </FormControl>
                       <FormMessage />
                       <p className="text-xs text-muted-foreground">

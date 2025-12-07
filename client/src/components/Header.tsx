@@ -1,12 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+ 
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,39 +10,44 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Search, ShoppingCart, User, Menu, Moon, Sun, Store, LayoutDashboard, LogOut, ShieldCheck } from "lucide-react";
+import { ShoppingCart, User, Menu, Moon, Sun, Store, LayoutDashboard, LogOut, ShieldCheck, Award, Search } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
+import { toSlug } from "@/lib/utils";
 import { getCartCount } from "@/lib/cart";
 import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/components/ThemeProvider";
 import { AuthDialog } from "@/components/AuthDialog";
 import { useToast } from "@/hooks/use-toast";
+import { useQuery } from "@tanstack/react-query";
+import type { Category } from "@shared/schema";
+import { NavigationMenu, NavigationMenuList, NavigationMenuItem, NavigationMenuTrigger, NavigationMenuContent, NavigationMenuLink } from "@/components/ui/navigation-menu";
+import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle, SheetClose, SheetDescription } from "@/components/ui/sheet";
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
 
-const giBrands = [
-  "All GI Brands",
-  "Lahore Heritage Crafts",
-  "Multani Crafts",
-  "Cholistani Heritage",
-  "Faisalabadi Weaves",
-  "Punjab Metal & Leather Works",
-  "Pothohari Crafts",
-  "Sufi Craft Collection",
-  "Salt & Stone Crafts",
-  "Saraiki Tribal Arts"
-];
+ 
 
 export default function Header() {
   const { user, isAuthenticated, isVendor, logout, isLoggingOut } = useAuth();
   const isAdmin = user?.role === "admin";
+  const isBuyer = user?.role === "buyer";
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
   const [cartCount, setCartCount] = useState(0);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedGIBrand, setSelectedGIBrand] = useState("all");
+
   const [, setLocation] = useLocation();
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
   const [authDialogTab, setAuthDialogTab] = useState<"login" | "register">("login");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const { data: categories = [] } = useQuery<Category[]>({
+    queryKey: ["/api/categories"],
+  });
+  const giBrands = Array.from(new Set(categories.map(c => c.giBrand)));
+ 
 
   useEffect(() => {
     setCartCount(getCartCount());
@@ -62,22 +60,7 @@ export default function Header() {
     return () => window.removeEventListener('cart-updated', handleCartUpdate);
   }, []);
 
-  const handleSearch = () => {
-    if (searchQuery.trim()) {
-      setLocation(`/products?search=${encodeURIComponent(searchQuery)}`);
-    } else {
-      setLocation('/products');
-    }
-  };
-
-  const handleGIBrandChange = (giBrand: string) => {
-    setSelectedGIBrand(giBrand);
-    if (giBrand === "all") {
-      setLocation('/products');
-    } else {
-      setLocation(`/products?giBrand=${encodeURIComponent(giBrand)}`);
-    }
-  };
+ 
 
   const handleLogout = () => {
     logout(undefined, {
@@ -86,6 +69,7 @@ export default function Header() {
           title: "Logged out",
           description: "You have been logged out successfully.",
         });
+        setLocation("/");
       },
       onError: (error: any) => {
         toast({
@@ -107,15 +91,82 @@ export default function Header() {
     setAuthDialogOpen(true);
   };
 
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = searchQuery.trim();
+    setLocation(q ? `/products?search=${encodeURIComponent(q)}` : "/products");
+  };
+
 
   return (
     <header className="sticky top-0 z-50 bg-background border-b">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16 gap-4">
           <div className="flex items-center gap-4 sm:gap-6">
-            <Button variant="ghost" size="icon" className="md:hidden" data-testid="button-menu" aria-label="Open navigation menu">
-              <Menu className="w-5 h-5" />
-            </Button>
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" className="md:hidden" data-testid="button-menu" aria-label="Open navigation menu">
+                  <Menu className="w-5 h-5" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left">
+                <SheetHeader>
+                  <SheetTitle>Navigation</SheetTitle>
+                  <SheetDescription className="sr-only">Main site navigation</SheetDescription>
+                </SheetHeader>
+                <div className="p-2 max-h-[calc(100vh-4rem)] overflow-y-auto">
+                  <Accordion type="multiple" className="divide-y">
+                    <AccordionItem value="gi-brands">
+                      <AccordionTrigger className="px-2">
+                        <span className="flex items-center gap-2"><Award className="w-4 h-4" /> GI Brands</span>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <ScrollArea className="h-[60vh]">
+                          <div className="mt-2 grid grid-cols-1 gap-1 pr-2">
+                            {giBrands.map((brand) => (
+                              <SheetClose key={brand} asChild>
+                                <Link href={`/brands/${toSlug(brand)}`}>
+                                  <span className="block w-full rounded-md px-3 py-2 text-sm leading-snug whitespace-normal break-words hover:bg-muted" data-testid={`link-gi-${brand.toLowerCase().replace(/\s+/g, '-')}`}>{brand}</span>
+                                </Link>
+                              </SheetClose>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      </AccordionContent>
+                    </AccordionItem>
+                    <AccordionItem value="vendors">
+                      <AccordionTrigger className="px-2">
+                        <span className="flex items-center gap-2"><Store className="w-4 h-4" /> Artisans</span>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="mt-2 grid grid-cols-1 gap-1">
+                          <SheetClose asChild>
+                            <Link href="/vendor/register">
+                              <span className="block w-full rounded-md px-3 py-2 text-sm leading-snug hover:bg-muted">Create Store</span>
+                            </Link>
+                          </SheetClose>
+                          <SheetClose asChild>
+                            <Link href="/vendor/pricing">
+                              <span className="block w-full rounded-md px-3 py-2 text-sm leading-snug hover:bg-muted">Pricing</span>
+                            </Link>
+                          </SheetClose>
+                          <SheetClose asChild>
+                            <Link href="/vendor/guide">
+                              <span className="block w-full rounded-md px-3 py-2 text-sm leading-snug hover:bg-muted">Seller Guide</span>
+                            </Link>
+                          </SheetClose>
+                          <SheetClose asChild>
+                            <Link href="/vendor/verification">
+                              <span className="block w-full rounded-md px-3 py-2 text-sm leading-snug hover:bg-muted">GI Verification</span>
+                            </Link>
+                          </SheetClose>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
+                </div>
+              </SheetContent>
+            </Sheet>
             <Link href="/">
               <h1 className="text-xl sm:text-2xl font-bold text-primary cursor-pointer hover-elevate rounded-md px-2 py-1" data-testid="text-logo">
                 Sanatzar
@@ -124,44 +175,110 @@ export default function Header() {
           </div>
 
           <div className="hidden md:flex items-center gap-3 flex-1 max-w-2xl">
-            <Select value={selectedGIBrand} onValueChange={handleGIBrandChange}>
-              <SelectTrigger className="w-56" data-testid="select-gi-brand">
-                <SelectValue placeholder="All GI Brands" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All GI Brands</SelectItem>
-                {giBrands.slice(1).map((brand) => (
-                  <SelectItem key={brand} value={brand}>
-                    {brand}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <div className="flex-1 flex items-center relative">
-              <Input
-                type="search"
-                placeholder="Search handicrafts..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                className="flex-1 pr-10"
-                data-testid="input-search"
-              />
-              <Button
-                size="icon"
-                variant="ghost"
-                className="absolute right-0 top-1/2 -translate-y-1/2 mt-[35px]"
-                onClick={handleSearch}
-                data-testid="button-search"
-                aria-label="Search products"
-              >
-                <Search className="w-4 h-4" />
-              </Button>
-            </div>
+            <NavigationMenu>
+              <NavigationMenuList>
+                <NavigationMenuItem>
+                  <NavigationMenuTrigger>
+                    <div className="flex items-center gap-2"><Award className="w-4 h-4" /> GI Brands</div>
+                  </NavigationMenuTrigger>
+                  <NavigationMenuContent>
+                    <div className="grid grid-cols-2 gap-1.5 p-3 w-[520px] sm:w-[600px]">
+                      {giBrands.map((brand) => (
+                        <NavigationMenuLink key={brand} asChild>
+                          <Link href={`/brands/${toSlug(brand)}`}>
+                            <span className="block rounded-md px-2 py-1.5 text-sm leading-snug whitespace-normal break-words hover:bg-muted" data-testid={`link-gi-${brand.toLowerCase().replace(/\s+/g, '-')}`}>{brand}</span>
+                          </Link>
+                        </NavigationMenuLink>
+                      ))}
+                    </div>
+                  </NavigationMenuContent>
+                </NavigationMenuItem>
+                <NavigationMenuItem>
+                  <NavigationMenuTrigger>
+                    <div className="flex items-center gap-2"><Store className="w-4 h-4" /> Artisans</div>
+                  </NavigationMenuTrigger>
+                  <NavigationMenuContent>
+                    <div className="grid grid-cols-2 gap-1.5 p-3 w-[520px] sm:w-[600px]">
+                      <NavigationMenuLink asChild>
+                        <Link href="/vendor/register">
+                          <span className="block rounded-md px-2 py-1.5 text-sm leading-snug hover:bg-muted" data-testid="link-create-store">Create Store</span>
+                        </Link>
+                      </NavigationMenuLink>
+                      <NavigationMenuLink asChild>
+                          <Link href="/vendor/pricing">
+                            <span className="block rounded-md px-2 py-1.5 text-sm leading-snug hover:bg-muted" data-testid="link-pricing">Pricing</span>
+                          </Link>
+                      </NavigationMenuLink>
+                      <NavigationMenuLink asChild>
+                          <Link href="/vendor/guide">
+                            <span className="block rounded-md px-2 py-1.5 text-sm leading-snug hover:bg-muted" data-testid="link-seller-guide">Seller Guide</span>
+                          </Link>
+                      </NavigationMenuLink>
+                      <NavigationMenuLink asChild>
+                          <Link href="/vendor/verification">
+                            <span className="block rounded-md px-2 py-1.5 text-sm leading-snug hover:bg-muted" data-testid="link-gi-verification">GI Verification</span>
+                          </Link>
+                      </NavigationMenuLink>
+                    </div>
+                  </NavigationMenuContent>
+                </NavigationMenuItem>
+              </NavigationMenuList>
+            </NavigationMenu>
+            <form onSubmit={handleSearchSubmit} className="ml-auto">
+              <div className="relative w-[260px] lg:w-[360px]">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search the Handicrafts"
+                  aria-label="Search the Handicrafts"
+                  className="pl-9"
+                  data-testid="input-header-search"
+                />
+              </div>
+            </form>
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2">
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="md:hidden"
+                  aria-label="Open search"
+                  data-testid="button-mobile-search"
+                >
+                  <Search className="w-5 h-5" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="top">
+                <SheetHeader>
+                  <SheetTitle>Search</SheetTitle>
+                  <SheetDescription className="sr-only">Search the handicrafts</SheetDescription>
+                </SheetHeader>
+                <form onSubmit={handleSearchSubmit} className="p-4">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search the Handicrafts"
+                      aria-label="Search the Handicrafts"
+                      className="pl-9"
+                    />
+                  </div>
+                  <div className="mt-3 flex justify-end">
+                    <SheetClose asChild>
+                      <Button type="submit">Search</Button>
+                    </SheetClose>
+                  </div>
+                </form>
+              </SheetContent>
+            </Sheet>
+            
             <Button
               variant="ghost"
               size="icon"
@@ -177,10 +294,12 @@ export default function Header() {
                 {cartCount > 0 && (
                   <Badge
                     variant="destructive"
-                    className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 text-xs"
+                    className="absolute -top-1.5 -right-0 z-[100] rounded-full min-w-[20px] h-[20px] flex items-center justify-center px-[5px] text-[11px] font-bold leading-none shadow-md border-2 border-background"
                     data-testid="badge-cart-count"
+                    aria-label={`Cart items: ${cartCount}`}
+                    style={{ backgroundColor: '#e63946' }}
                   >
-                    {cartCount}
+                    {cartCount > 9 ? '9+' : cartCount}
                   </Badge>
                 )}
               </Button>
@@ -232,6 +351,17 @@ export default function Header() {
                       <DropdownMenuSeparator />
                     </>
                   )}
+                  {isBuyer && (
+                    <>
+                      <DropdownMenuItem asChild>
+                        <Link href="/buyer/dashboard">
+                          <LayoutDashboard className="w-4 h-4 mr-2" />
+                          <span data-testid="link-buyer-dashboard">Buyer Dashboard</span>
+                        </Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
                   <DropdownMenuItem onClick={handleLogout} disabled={isLoggingOut} data-testid="button-logout">
                     <LogOut className="w-4 h-4 mr-2" />
                     <span>{isLoggingOut ? "Logging out..." : "Logout"}</span>
@@ -246,42 +376,7 @@ export default function Header() {
           </div>
         </div>
 
-        <div className="md:hidden pb-3 space-y-2">
-          <div className="flex items-center relative">
-            <Input
-              type="search"
-              placeholder="Search handicrafts..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              className="flex-1 pr-10"
-              data-testid="input-search-mobile"
-            />
-            <Button
-              size="icon"
-              variant="ghost"
-              className="absolute right-0 top-1/2 -translate-y-1/2 mt-[35px]"
-              onClick={handleSearch}
-              data-testid="button-search-mobile"
-              aria-label="Search"
-            >
-              <Search className="w-4 h-4" />
-            </Button>
-          </div>
-          <Select value={selectedGIBrand} onValueChange={handleGIBrandChange}>
-            <SelectTrigger className="w-full" data-testid="select-gi-brand-mobile">
-              <SelectValue placeholder="All GI Brands" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All GI Brands</SelectItem>
-              {giBrands.slice(1).map((brand) => (
-                <SelectItem key={brand} value={brand}>
-                  {brand}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        
       </div>
 
       <AuthDialog

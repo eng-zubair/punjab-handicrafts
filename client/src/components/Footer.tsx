@@ -1,6 +1,14 @@
 import { Separator } from "@/components/ui/separator";
+import { useQuery } from "@tanstack/react-query";
+import type { Category } from "@shared/schema";
+import { Link } from "wouter";
+import { toSlug } from "@/lib/utils";
 
 export default function Footer() {
+  const { data: categories = [] } = useQuery<Category[]>({
+    queryKey: ["/api/categories"],
+  });
+  const giBrands = Array.from(new Set(categories.map(c => c.giBrand))).sort((a, b) => a.localeCompare(b));
   return (
     <footer className="bg-card border-t mt-16">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -15,22 +23,25 @@ export default function Footer() {
           </div>
           
           <div>
-            <h4 className="font-semibold mb-4">Shop by District</h4>
+            <h4 className="font-semibold mb-4">GI Brands</h4>
             <ul className="space-y-2 text-sm text-muted-foreground">
-              <li><a href="#" className="hover:text-foreground transition-colors">Lahore</a></li>
-              <li><a href="#" className="hover:text-foreground transition-colors">Multan</a></li>
-              <li><a href="#" className="hover:text-foreground transition-colors">Bahawalpur</a></li>
-              <li><a href="#" className="hover:text-foreground transition-colors">Faisalabad</a></li>
+              {giBrands.map((brand) => (
+                <li key={brand}>
+                  <Link href={`/brands/${toSlug(brand)}`} className="hover:text-foreground transition-colors">
+                    {brand}
+                  </Link>
+                </li>
+              ))}
             </ul>
           </div>
           
           <div>
             <h4 className="font-semibold mb-4">For Vendors</h4>
             <ul className="space-y-2 text-sm text-muted-foreground">
-              <li><a href="#" className="hover:text-foreground transition-colors">Create Store</a></li>
-              <li><a href="#" className="hover:text-foreground transition-colors">Pricing</a></li>
-              <li><a href="#" className="hover:text-foreground transition-colors">Seller Guide</a></li>
-              <li><a href="#" className="hover:text-foreground transition-colors">GI Verification</a></li>
+              <li><Link href="/vendor/register" className="hover:text-foreground transition-colors">Create Store</Link></li>
+              <li><Link href="/vendor/pricing" className="hover:text-foreground transition-colors">Pricing</Link></li>
+              <li><Link href="/vendor/guide" className="hover:text-foreground transition-colors">Seller Guide</Link></li>
+              <li><Link href="/vendor/verification" className="hover:text-foreground transition-colors">GI Verification</Link></li>
             </ul>
           </div>
           

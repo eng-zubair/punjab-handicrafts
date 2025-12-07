@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Store, Star } from "lucide-react";
 import DistrictBadge from "./DistrictBadge";
+import { Link } from "wouter";
 
 interface VendorCardProps {
   id: string;
@@ -24,10 +25,6 @@ export default function VendorCard({
   totalProducts,
   avatar,
 }: VendorCardProps) {
-  const handleVisitStore = () => {
-    console.log(`Visit store: ${name}`);
-  };
-
   const initials = name
     .split(' ')
     .map(word => word[0])
@@ -70,13 +67,14 @@ export default function VendorCard({
                 </Badge>
               )}
             </div>
-            <Button 
-              className="w-full"
-              onClick={handleVisitStore}
-              data-testid={`button-visit-store-${id}`}
-            >
-              Visit Store
-            </Button>
+            <Link href={`/stores/${id}`}>
+              <Button 
+                className="w-full"
+                data-testid={`button-visit-store-${id}`}
+              >
+                Visit Store
+              </Button>
+            </Link>
           </div>
         </div>
       </CardContent>

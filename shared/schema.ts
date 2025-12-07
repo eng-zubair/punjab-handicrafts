@@ -22,11 +22,18 @@ export const users = pgTable("users", {
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
+  phone: varchar("phone"),
+  defaultShippingAddress: text("default_shipping_address"),
+  notificationPrefs: jsonb("notification_prefs"),
+  shippingPrefs: jsonb("shipping_prefs"),
+  taxExempt: boolean("tax_exempt").notNull().default(false),
   emailVerified: boolean("email_verified").notNull().default(false),
   verificationToken: varchar("verification_token"),
   passwordResetToken: varchar("password_reset_token"),
   passwordResetExpires: timestamp("password_reset_expires"),
   role: text("role").notNull().default("buyer"),
+  isActive: boolean("is_active").notNull().default(true),
+  lastLogin: timestamp("last_login"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -54,6 +61,12 @@ export const products = pgTable("products", {
   district: text("district").notNull(),
   giBrand: text("gi_brand").notNull(),
   variants: text("variants"),
+  category: text("category").notNull().default("general"),
+  weightKg: decimal("weight_kg", { precision: 10, scale: 3 }),
+  lengthCm: decimal("length_cm", { precision: 10, scale: 2 }),
+  widthCm: decimal("width_cm", { precision: 10, scale: 2 }),
+  heightCm: decimal("height_cm", { precision: 10, scale: 2 }),
+  taxExempt: boolean("tax_exempt").notNull().default(false),
   status: text("status").notNull().default("pending"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -66,6 +79,43 @@ export const orders = pgTable("orders", {
   status: text("status").notNull().default("pending"),
   paymentMethod: text("payment_method"),
   shippingAddress: text("shipping_address"),
+  recipientName: text("recipient_name"),
+  recipientEmail: text("recipient_email"),
+  shippingStreet: text("shipping_street"),
+  shippingApartment: text("shipping_apartment"),
+  shippingCity: text("shipping_city"),
+  shippingPhone: varchar("shipping_phone"),
+  shippingProvince: text("shipping_province"),
+  shippingMethod: text("shipping_method"),
+  shippingCost: decimal("shipping_cost", { precision: 10, scale: 2 }),
+  shippingPostalCode: text("shipping_postal_code"),
+  shippingCountry: text("shipping_country").default("Pakistan"),
+  specialInstructions: text("special_instructions"),
+  billingSameAsShipping: boolean("billing_same_as_shipping").default(true),
+  billingStreet: text("billing_street"),
+  billingApartment: text("billing_apartment"),
+  billingCity: text("billing_city"),
+  billingProvince: text("billing_province"),
+  billingPostalCode: text("billing_postal_code"),
+  billingCountry: text("billing_country").default("Pakistan"),
+  taxAmount: decimal("tax_amount", { precision: 10, scale: 2 }),
+  taxDetails: jsonb("tax_details"),
+  preferredCommunication: text("preferred_communication"),
+  processingEstimate: text("processing_estimate"),
+  trackingNumber: text("tracking_number"),
+  courierService: text("courier_service"),
+  deliveryConfirmedAt: timestamp("delivery_confirmed_at"),
+  codPaymentStatus: text("cod_payment_status"),
+  codCollectedAt: timestamp("cod_collected_at"),
+  codReceiptId: varchar("cod_receipt_id"),
+  cancellationReason: text("cancellation_reason"),
+  cancelledBy: text("cancelled_by"),
+  cancelledAt: timestamp("cancelled_at"),
+  paymentVerificationStatus: text("payment_verification_status"),
+  paymentVerifiedAt: timestamp("payment_verified_at"),
+  paymentReference: text("payment_reference"),
+  reactivatedAt: timestamp("reactivated_at"),
+  reactivatedBy: text("reactivated_by"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -83,6 +133,15 @@ export const categories = pgTable("categories", {
   district: text("district").notNull().unique(),
   giBrand: text("gi_brand").notNull(),
   crafts: text("crafts").array().notNull(),
+});
+
+// Product categories managed by Admin
+export const productCategories = pgTable("product_categories", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().unique(),
+  slug: text("slug").notNull().unique(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const messages = pgTable("messages", {
@@ -160,8 +219,74 @@ export const promotionProducts = pgTable("promotion_products", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   promotionId: varchar("promotion_id").notNull().references(() => promotions.id, { onDelete: 'cascade' }),
   productId: varchar("product_id").notNull().references(() => products.id, { onDelete: 'cascade' }),
+  overridePrice: decimal("override_price", { precision: 10, scale: 2 }),
+  quantityLimit: integer("quantity_limit").notNull().default(0),
+  conditions: jsonb("conditions"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const promotionProductHistory = pgTable("promotion_product_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  promotionId: varchar("promotion_id").notNull().references(() => promotions.id, { onDelete: 'cascade' }),
+  productId: varchar("product_id").notNull().references(() => products.id, { onDelete: 'cascade' }),
+  changeType: text("change_type").notNull(),
+  changes: jsonb("changes"),
+  changedBy: varchar("changed_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const reviews = pgTable("reviews", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  productId: varchar("product_id").notNull().references(() => products.id, { onDelete: 'cascade' }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  rating: decimal("rating", { precision: 2, scale: 1 }).notNull(),
+  comment: text("comment").notNull(),
+  verifiedPurchase: boolean("verified_purchase").notNull().default(false),
+  helpfulUp: integer("helpful_up").notNull().default(0),
+  helpfulDown: integer("helpful_down").notNull().default(0),
+  status: text("status").notNull().default("approved"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const reviewMedia = pgTable("review_media", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  reviewId: varchar("review_id").notNull().references(() => reviews.id, { onDelete: 'cascade' }),
+  url: text("url").notNull(),
+  type: text("type").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const reviewVotes = pgTable("review_votes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  reviewId: varchar("review_id").notNull().references(() => reviews.id, { onDelete: 'cascade' }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  value: integer("value").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("IDX_review_vote_unique").on(table.reviewId, table.userId)
+]);
+
+export const PRODUCT_CATEGORIES = [
+  "Clothing",
+  "Stitched",
+  "Unstitched",
+  "Pottery",
+  "Furniture",
+  "Home Decor",
+  "Jewelry",
+  "Footwear",
+  "Other"
+] as const;
+
+export const variantSchema = z.object({
+  type: z.string().min(1, "Variant type is required"),
+  option: z.string().min(1, "Variant option is required"),
+  sku: z.string().min(1, "SKU is required"),
+  price: z.coerce.number().min(0, "Price must be positive"),
+  stock: z.coerce.number().min(0, "Stock must be positive"),
+});
+
+export type Variant = z.infer<typeof variantSchema>;
 
 export const upsertUserSchema = createInsertSchema(users).omit({
   createdAt: true,
@@ -198,6 +323,11 @@ export const insertOrderItemSchema = createInsertSchema(orderItems).omit({
 
 export const insertCategorySchema = createInsertSchema(categories).omit({
   id: true,
+});
+
+export const insertProductCategorySchema = createInsertSchema(productCategories).omit({
+  id: true,
+  createdAt: true,
 });
 
 export const insertMessageSchema = createInsertSchema(messages).omit({
@@ -241,6 +371,30 @@ export const insertPromotionProductSchema = createInsertSchema(promotionProducts
   createdAt: true,
 });
 
+export const insertPromotionProductHistorySchema = createInsertSchema(promotionProductHistory).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertReviewSchema = createInsertSchema(reviews).omit({
+  id: true,
+  createdAt: true,
+  helpfulUp: true,
+  helpfulDown: true,
+  verifiedPurchase: true,
+  status: true,
+});
+
+export const insertReviewMediaSchema = createInsertSchema(reviewMedia).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertReviewVoteSchema = createInsertSchema(reviewVotes).omit({
+  id: true,
+  createdAt: true,
+});
+
 export type UpsertUser = z.infer<typeof upsertUserSchema>;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -259,6 +413,9 @@ export type OrderItem = typeof orderItems.$inferSelect;
 
 export type InsertCategory = z.infer<typeof insertCategorySchema>;
 export type Category = typeof categories.$inferSelect;
+
+export type InsertProductCategory = z.infer<typeof insertProductCategorySchema>;
+export type ProductCategory = typeof productCategories.$inferSelect;
 
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
 export type Message = typeof messages.$inferSelect;
@@ -283,6 +440,17 @@ export type Promotion = typeof promotions.$inferSelect;
 
 export type InsertPromotionProduct = z.infer<typeof insertPromotionProductSchema>;
 export type PromotionProduct = typeof promotionProducts.$inferSelect;
+export type InsertPromotionProductHistory = z.infer<typeof insertPromotionProductHistorySchema>;
+export type PromotionProductHistory = typeof promotionProductHistory.$inferSelect;
+
+export type InsertReview = z.infer<typeof insertReviewSchema>;
+export type Review = typeof reviews.$inferSelect;
+
+export type InsertReviewMedia = z.infer<typeof insertReviewMediaSchema>;
+export type ReviewMedia = typeof reviewMedia.$inferSelect;
+
+export type InsertReviewVote = z.infer<typeof insertReviewVoteSchema>;
+export type ReviewVote = typeof reviewVotes.$inferSelect;
 
 // Authentication schemas with password validation
 export const registerSchema = z.object({
@@ -303,3 +471,49 @@ export const loginSchema = z.object({
 
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+export const platformSettings = pgTable("platform_settings", {
+  id: varchar("id").primaryKey().default("default"),
+  taxEnabled: boolean("tax_enabled").notNull().default(true),
+  shippingEnabled: boolean("shipping_enabled").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const taxRules = pgTable("tax_rules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  enabled: boolean("enabled").notNull().default(true),
+  category: text("category"),
+  province: text("province"),
+  rate: decimal("rate", { precision: 5, scale: 2 }).notNull(),
+  exempt: boolean("exempt").notNull().default(false),
+  priority: integer("priority").notNull().default(0),
+  createdBy: varchar("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const shippingRateRules = pgTable("shipping_rate_rules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  enabled: boolean("enabled").notNull().default(true),
+  carrier: text("carrier").notNull().default("internal"),
+  method: text("method").notNull().default("standard"),
+  zone: text("zone").notNull().default("PK"),
+  minWeightKg: decimal("min_weight_kg", { precision: 10, scale: 3 }).notNull().default("0"),
+  maxWeightKg: decimal("max_weight_kg", { precision: 10, scale: 3 }).notNull().default("999"),
+  baseRate: decimal("base_rate", { precision: 10, scale: 2 }).notNull().default("0"),
+  perKgRate: decimal("per_kg_rate", { precision: 10, scale: 2 }).notNull().default("0"),
+  dimensionalFactor: decimal("dimensional_factor", { precision: 10, scale: 3 }),
+  surcharge: decimal("surcharge", { precision: 10, scale: 2 }),
+  priority: integer("priority").notNull().default(0),
+  createdBy: varchar("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const configAudits = pgTable("config_audits", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  entityType: text("entity_type").notNull(),
+  entityId: varchar("entity_id").notNull(),
+  action: text("action").notNull(),
+  changes: jsonb("changes"),
+  changedBy: varchar("changed_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});

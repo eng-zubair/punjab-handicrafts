@@ -10,8 +10,9 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, ShieldCheck, Users, ShoppingCart, BarChart3, Store } from "lucide-react";
+import { LayoutDashboard, ShieldCheck, Users, ShoppingCart, BarChart3, Store, Settings, LogOut, Tag } from "lucide-react";
 import { Link, useLocation } from "wouter";
+import { useAuth } from "@/hooks/use-auth";
 
 const menuItems = [
   {
@@ -30,6 +31,11 @@ const menuItems = [
     icon: Users,
   },
   {
+    title: "Stores",
+    url: "/admin/stores",
+    icon: Store,
+  },
+  {
     title: "Orders",
     url: "/admin/orders",
     icon: ShoppingCart,
@@ -39,10 +45,21 @@ const menuItems = [
     url: "/admin/analytics",
     icon: BarChart3,
   },
+  {
+    title: "Categories",
+    url: "/admin/categories",
+    icon: Tag,
+  },
+  {
+    title: "Settings",
+    url: "/admin/settings",
+    icon: Settings,
+  },
 ];
 
 export function AdminSidebar() {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
+  const { logout, isLoggingOut } = useAuth();
 
   return (
     <Sidebar>
@@ -85,6 +102,20 @@ export function AdminSidebar() {
                 <Store className="w-4 h-4" />
                 <span>Back to Marketplace</span>
               </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              onClick={() =>
+                logout(undefined, {
+                  onSuccess: () => setLocation("/"),
+                })
+              }
+              disabled={isLoggingOut}
+              data-testid="button-admin-sidebar-logout"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>{isLoggingOut ? "Logging out..." : "Logout"}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

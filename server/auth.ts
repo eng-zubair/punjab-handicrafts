@@ -66,7 +66,11 @@ export async function setupAuth(app: Express) {
             return done(null, false, { message: "Invalid email or password" });
           }
 
-          return done(null, { userId: user.id });
+          if ((user as any).isActive === false) {
+            return done(null, false, { message: "Account is deactivated" });
+          }
+
+          return done(null, { userId: user.id, role: (user as any).role });
         } catch (error) {
           return done(error);
         }
@@ -86,7 +90,7 @@ export async function setupAuth(app: Express) {
       if (!user) {
         return done(null, false);
       }
-      done(null, { userId: user.id });
+      done(null, { userId: user.id, role: (user as any).role });
     } catch (error) {
       done(error);
     }

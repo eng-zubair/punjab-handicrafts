@@ -12,7 +12,7 @@ interface AdminDashboardProps {
 }
 
 export function AdminDashboard({ children }: AdminDashboardProps) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, logout, isLoggingOut } = useAuth();
   const [, setLocation] = useLocation();
   const { theme, toggleTheme } = useTheme();
 
@@ -60,6 +60,7 @@ export function AdminDashboard({ children }: AdminDashboardProps) {
               >
                 {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
               </Button>
+              
             </div>
           </header>
           <main className="flex-1 overflow-auto">

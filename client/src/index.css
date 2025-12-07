@@ -347,9 +347,32 @@
   /* If there's a 1px border, adjust the inset so that it covers that parent's border */
   .border.hover-elevate:not(.no-hover-interaction-elevate)::after,
   .border.active-elevate:not(.no-active-interaction-elevate)::after,
-  .border.hover-elevate-2:not(.no-hover-interaction-elevate)::after,
+  .border.hover-elevate:not(.no-hover-interaction-elevate)::after,
   .border.active-elevate-2:not(.no-active-interaction-elevate)::after,
   .border.hover-elevate:not(.no-hover-interaction-elevate)::after {
     inset: -1px;
+  }
+}
+
+@layer components {
+  .vendor-tooltip {
+    position: fixed;
+    z-index: 9999;
+    max-width: 280px;
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    background-color: hsl(var(--popover));
+    color: hsl(var(--popover-foreground));
+    border: 1px solid hsl(var(--popover-border));
+    box-shadow: 0 8px 24px rgba(0,0,0,.12);
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+    transition: opacity 200ms ease, transform 200ms ease;
+    pointer-events: none;
+    will-change: transform, opacity;
+  }
+  .vendor-tooltip[data-visible="true"] {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
   }
 }

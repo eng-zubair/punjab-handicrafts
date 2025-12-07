@@ -14,6 +14,10 @@ interface AnalyticsData {
   pendingProducts: number;
   storesByDistrict?: { [district: string]: number };
   topGIBrands?: { brand: string; count: number }[];
+  reviewsTotal?: number;
+  reviewsAverage?: number;
+  codOrders?: number;
+  codDelivered?: number;
 }
 
 export default function AdminAnalytics() {
@@ -63,6 +67,31 @@ export default function AdminAnalytics() {
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
+                    <TrendingUp className="w-4 h-4 text-primary" />
+                    COD Performance
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div>
+                    <p className="text-sm text-muted-foreground">COD Orders</p>
+                    <p className="text-2xl font-bold" data-testid="metric-analytics-cod-orders">
+                      {analytics?.codOrders || 0}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">COD Fulfillment Rate</p>
+                    <p className="text-lg font-semibold" data-testid="metric-analytics-cod-fulfillment">
+                      {analytics?.codOrders
+                        ? `${Math.round(((analytics.codDelivered || 0) / (analytics.codOrders || 1)) * 100)}%`
+                        : '0%'}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
                     <Store className="w-4 h-4 text-primary" />
                     Store Statistics
                   </CardTitle>
@@ -101,6 +130,29 @@ export default function AdminAnalytics() {
                     <p className="text-sm text-muted-foreground">Pending Approval</p>
                     <p className="text-lg font-semibold" data-testid="metric-analytics-pending-products">
                       {analytics?.pendingProducts || 0}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <BarChart3 className="w-4 h-4 text-primary" />
+                    Reviews
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total Reviews</p>
+                    <p className="text-2xl font-bold" data-testid="metric-analytics-reviews">
+                      {analytics?.reviewsTotal || 0}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Average Rating</p>
+                    <p className="text-lg font-semibold" data-testid="metric-analytics-avg-rating">
+                      {Number(analytics?.reviewsAverage || 0).toFixed(1)} / 5
                     </p>
                   </div>
                 </CardContent>

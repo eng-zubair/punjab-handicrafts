@@ -3,7 +3,13 @@ import express from "express";
 import { createServer, type Server } from "http";
 import passport from "passport";
 import { storage } from "./storage";
+import { reviews, users, promotionProductHistory, promotionProducts, promotions, taxRules, shippingRateRules, platformSettings, configAudits } from "@shared/schema";
+import { db, pool } from "./db";
+import { sql, and, eq, inArray, desc } from "drizzle-orm";
 import { setupAuth, isAuthenticated, hashPassword } from "./auth";
+import { log } from "./vite";
+import { verifyPassword } from "./auth";
+import { z } from "zod";
 import multer from "multer";
 import path from "path";
 import fs from "fs/promises";
@@ -123,12 +129,329 @@ const upload = multer({
   },
 });
 
+const verificationStorage = multer.diskStorage({
+  destination: async (req: any, file, cb) => {
+    try {
+      const storeId = req.query.storeId;
+      if (!storeId) {
+        return cb(new Error("Store ID is required in query string"), "");
+      }
+      const uploadDir = path.join(process.cwd(), "uploads", "verification", storeId);
+      await fs.mkdir(uploadDir, { recursive: true });
+      cb(null, uploadDir);
+    } catch (error) {
+      cb(error as Error, "");
+    }
+  },
+  filename: (req, file, cb) => {
+    const timestamp = Date.now();
+    const randomStr = Math.random().toString(36).substring(2, 8);
+    const ext = path.extname(file.originalname).toLowerCase();
+    const sanitizedName = `${timestamp}-${randomStr}${ext}`;
+    cb(null, sanitizedName);
+  },
+});
+
+const verificationFileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+  const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'application/pdf'];
+  const allowedExts = ['.jpg', '.jpeg', '.png', '.webp', '.pdf'];
+  const ext = path.extname(file.originalname).toLowerCase();
+  if (allowedMimes.includes(file.mimetype) && allowedExts.includes(ext)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only JPEG, PNG, WebP images and PDF documents are allowed'));
+  }
+};
+
+const uploadVerification = multer({
+  storage: verificationStorage,
+  fileFilter: verificationFileFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 10,
+  },
+});
+
 export async function registerRoutes(app: Express): Promise<Server> {
+  console.log('Registering routes...');
+  
+  app.get('/api/ping-test', (req, res) => {
+    console.log('Ping test hit');
+    res.send('pong');
+  });
+
+  let orderSchemaEnsured = false;
+  async function ensureOrderSchema() {
+    if (orderSchemaEnsured) return;
+    const statements = [
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_phone varchar`,
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_province text`,
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_method text`,
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_cost numeric(10,2)`,
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS tax_amount numeric(10,2)`,
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS tax_details jsonb`,
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS preferred_communication text`,
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS processing_estimate text`,
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_number text`,
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS courier_service text`,
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_confirmed_at timestamp`,
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS cod_payment_status text`,
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS cod_collected_at timestamp`,
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS cod_receipt_id varchar`,
+      `ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancellation_reason text`,
+    ];
+    try {
+      for (const sqlText of statements) {
+        await pool.query(sqlText);
+      }
+      orderSchemaEnsured = true;
+    } catch (e) {
+      console.error('ensureOrderSchema error:', e);
+    }
+  }
+  let taxShipSchemaEnsured = false;
+  async function ensureTaxShipSchema() {
+    if (taxShipSchemaEnsured) return;
+    try {
+      const stmts = [
+        `CREATE TABLE IF NOT EXISTS platform_settings (
+          id varchar PRIMARY KEY DEFAULT 'default',
+          tax_enabled boolean NOT NULL DEFAULT true,
+          shipping_enabled boolean NOT NULL DEFAULT true,
+          created_at timestamp DEFAULT now() NOT NULL,
+          updated_at timestamp DEFAULT now() NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS tax_rules (
+          id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+          enabled boolean NOT NULL DEFAULT true,
+          category text,
+          province text,
+          rate numeric(5,2) NOT NULL,
+          exempt boolean NOT NULL DEFAULT false,
+          priority integer NOT NULL DEFAULT 0,
+          created_by varchar REFERENCES users(id),
+          created_at timestamp DEFAULT now() NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS shipping_rate_rules (
+          id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+          enabled boolean NOT NULL DEFAULT true,
+          carrier text NOT NULL DEFAULT 'internal',
+          method text NOT NULL DEFAULT 'standard',
+          zone text NOT NULL DEFAULT 'PK',
+          min_weight_kg numeric(10,3) NOT NULL DEFAULT 0,
+          max_weight_kg numeric(10,3) NOT NULL DEFAULT 999,
+          base_rate numeric(10,2) NOT NULL DEFAULT 0,
+          per_kg_rate numeric(10,2) NOT NULL DEFAULT 0,
+          dimensional_factor numeric(10,3),
+          surcharge numeric(10,2),
+          priority integer NOT NULL DEFAULT 0,
+          created_by varchar REFERENCES users(id),
+          created_at timestamp DEFAULT now() NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS config_audits (
+          id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+          entity_type text NOT NULL,
+          entity_id varchar NOT NULL,
+          action text NOT NULL,
+          changes jsonb,
+          changed_by varchar REFERENCES users(id),
+          created_at timestamp DEFAULT now() NOT NULL
+        )`,
+      ];
+      for (const s of stmts) {
+        await pool.query(s);
+      }
+      taxShipSchemaEnsured = true;
+      try {
+        const rows = await db.select().from(platformSettings);
+        if (rows.length === 0) {
+          await db.insert(platformSettings).values({ id: 'default', taxEnabled: true, shippingEnabled: true });
+        }
+      } catch {}
+    } catch (e) {
+      console.error('ensureTaxShipSchema error:', e);
+    }
+  }
+
+  let productCategoriesSchemaEnsured = false;
+  async function ensureProductCategoriesSchema() {
+    if (productCategoriesSchemaEnsured) return;
+    try {
+      const stmt = `CREATE TABLE IF NOT EXISTS product_categories (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        name text NOT NULL UNIQUE,
+        slug text NOT NULL UNIQUE,
+        description text,
+        created_at timestamp DEFAULT now() NOT NULL
+      )`;
+      await pool.query(stmt);
+      productCategoriesSchemaEnsured = true;
+    } catch (e) {
+      console.error('ensureProductCategoriesSchema error:', e);
+    }
+  }
+
+  function detectProvince(address?: string): string | undefined {
+    if (!address) return undefined;
+    const a = address.toLowerCase();
+    const provinces = [
+      { key: 'punjab', name: 'Punjab' },
+      { key: 'islamabad', name: 'Islamabad' },
+      { key: 'ict', name: 'Islamabad' },
+      { key: 'khyber', name: 'Khyber Pakhtunkhwa' },
+      { key: 'kpk', name: 'Khyber Pakhtunkhwa' },
+      { key: 'kp', name: 'Khyber Pakhtunkhwa' },
+      { key: 'sindh', name: 'Sindh' },
+      { key: 'balochistan', name: 'Balochistan' },
+      { key: 'gb', name: 'Gilgit-Baltistan' },
+      { key: 'gilgit', name: 'Gilgit-Baltistan' },
+      { key: 'ajk', name: 'Azad Kashmir' },
+      { key: 'kashmir', name: 'Azad Kashmir' },
+    ];
+    for (const p of provinces) {
+      if (a.includes(p.key)) return p.name;
+    }
+    return undefined;
+  }
+
+  async function computeTax(items: Array<{ productId: string; quantity: number; price: string; productCategory?: string; taxExempt?: boolean }>, province: string | undefined, buyerId: string): Promise<{ amount: number; breakdown: Array<{ productId: string; rate: number; tax: number }> }> {
+    const settingsRows = await db.select().from(platformSettings);
+    const taxEnabled = settingsRows.length === 0 ? true : !!settingsRows[0].taxEnabled;
+    if (!taxEnabled) return { amount: 0, breakdown: items.map(it => ({ productId: it.productId, rate: 0, tax: 0 })) };
+
+    const user = await storage.getUser(buyerId);
+    if (user?.taxExempt) return { amount: 0, breakdown: items.map(it => ({ productId: it.productId, rate: 0, tax: 0 })) };
+
+    const rules = await db.select().from(taxRules);
+    let totalTax = 0;
+    const breakdown: Array<{ productId: string; rate: number; tax: number }> = [];
+    for (const it of items) {
+      const line = parseFloat(String(it.price)) * Number(it.quantity);
+      const cat = String(it.productCategory || 'general').toLowerCase();
+      const applicable = rules
+        .filter(r => r.enabled)
+        .filter(r => !r.category || String(r.category).toLowerCase() === cat)
+        .filter(r => !r.province || (province && String(r.province).toLowerCase() === province.toLowerCase()))
+        .sort((a: any, b: any) => (Number(b.priority || 0) - Number(a.priority || 0)));
+      let rate = 0;
+      let tax = 0;
+      if (it.taxExempt) {
+        rate = 0;
+        tax = 0;
+      } else if (applicable.length > 0) {
+        const rule = applicable[0] as any;
+        if (rule.exempt) {
+          rate = 0;
+          tax = 0;
+        } else {
+          rate = parseFloat(String(rule.rate));
+          tax = (rate / 100) * line;
+        }
+      }
+      totalTax += tax;
+      breakdown.push({ productId: it.productId, rate, tax });
+    }
+    return { amount: parseFloat(totalTax.toFixed(2)), breakdown };
+  }
+
+  async function computeShipping(items: Array<{ productId: string; quantity: number; price: string; weightKg?: number; lengthCm?: number; widthCm?: number; heightCm?: number }>, province: string | undefined, shippingMethod?: string): Promise<{ amount: number; breakdown: Array<{ productId: string; weightKg: number }>; carrier: string }> {
+    const settingsRows = await db.select().from(platformSettings);
+    const shippingEnabled = settingsRows.length === 0 ? true : !!settingsRows[0].shippingEnabled;
+    if (!shippingEnabled) return { amount: 0, breakdown: items.map(it => ({ productId: it.productId, weightKg: 0 })), carrier: 'internal' };
+
+    const method = (shippingMethod || 'standard').toLowerCase();
+    const zone = 'PK';
+    const rules = await db.select().from(shippingRateRules);
+    const active = rules.filter(r => r.enabled).filter(r => String(r.method).toLowerCase() === method).filter(r => String(r.zone).toUpperCase() === zone).sort((a: any, b: any) => (Number(b.priority || 0) - Number(a.priority || 0)));
+
+    let totalWeight = 0;
+    const breakdown: Array<{ productId: string; weightKg: number }> = [];
+    for (const it of items) {
+      const w = parseFloat(String(it.weightKg ?? 0)) * Number(it.quantity);
+      let dimWeight = 0;
+      if (it.lengthCm && it.widthCm && it.heightCm) {
+        const volCm = parseFloat(String(it.lengthCm)) * parseFloat(String(it.widthCm)) * parseFloat(String(it.heightCm));
+        const factor = parseFloat(String((active[0] as any)?.dimensionalFactor ?? 0)) || 0;
+        if (factor > 0) dimWeight = volCm / factor;
+      }
+      const effectiveWeight = Math.max(w, dimWeight);
+      totalWeight += effectiveWeight;
+      breakdown.push({ productId: it.productId, weightKg: parseFloat(effectiveWeight.toFixed(3)) });
+    }
+
+    const rule = active.find(r => totalWeight >= parseFloat(String(r.minWeightKg)) && totalWeight <= parseFloat(String(r.maxWeightKg))) || active[0];
+    if (!rule) return { amount: 0, breakdown, carrier: 'internal' };
+    const base = parseFloat(String(rule.baseRate)) || 0;
+    const perKg = parseFloat(String(rule.perKgRate)) || 0;
+    const surcharge = parseFloat(String(rule.surcharge ?? 0)) || 0;
+    const amount = base + perKg * totalWeight + surcharge;
+    return { amount: parseFloat(amount.toFixed(2)), breakdown, carrier: String(rule.carrier || 'internal') };
+  }
   // Serve uploaded files statically
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
   // Setup Authentication
   await setupAuth(app);
+
+  // Buyer orders listing (Moved to top to ensure registration)
+  app.get('/api/buyer/orders', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const orders = await storage.getOrdersByBuyer(userId);
+      const out = orders.map(o => ({
+        id: o.id,
+        buyerId: o.buyerId,
+        total: String(o.total),
+        status: o.status,
+        paymentMethod: (o as any).paymentMethod || null,
+        shippingAddress: (o as any).shippingAddress || null,
+        createdAt: String(o.createdAt as any),
+      }));
+      res.json(out);
+    } catch (error) {
+      console.error('Fetch buyer orders error:', error);
+      res.status(500).json({ message: 'Failed to fetch orders' });
+    }
+  });
+
+  // Fetch last shipping details for auto-fill (Moved to top to ensure registration)
+  app.get('/api/buyer/last-shipping-details-v2', isAuthenticated, async (req: any, res) => {
+    console.log('Hit /api/buyer/last-shipping-details-v2');
+    try {
+      const userId = req.userId;
+      const orders = await storage.getOrdersByBuyer(userId);
+      if (orders.length > 0) {
+        const lastOrder = orders[0];
+        // Also fetch user email/phone if not in order, but order usually has it
+        const user = await storage.getUser(userId);
+        
+        res.json({
+          recipientName: lastOrder.recipientName || (user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : ''),
+          recipientEmail: lastOrder.recipientEmail || user?.email || '',
+          shippingPhone: lastOrder.shippingPhone || user?.phone || '',
+          shippingStreet: lastOrder.shippingStreet || '',
+          shippingApartment: lastOrder.shippingApartment || '',
+          shippingCity: lastOrder.shippingCity || '',
+          shippingProvince: lastOrder.shippingProvince || '',
+          shippingPostalCode: lastOrder.shippingPostalCode || '',
+          shippingCountry: lastOrder.shippingCountry || 'Pakistan',
+          shippingAddress: lastOrder.shippingAddress || '',
+        });
+      } else {
+        // Fallback to user profile if no orders
+        const user = await storage.getUser(userId);
+        res.json({
+          recipientName: user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : '',
+          recipientEmail: user?.email || '',
+          shippingPhone: user?.phone || '',
+          shippingCountry: 'Pakistan',
+        });
+      }
+    } catch (error) {
+      console.error('Fetch last shipping details error:', error);
+      res.status(500).json({ message: 'Failed to fetch details' });
+    }
+  });
 
   // File Upload Routes
   // Note: storeId must be passed as query parameter because multer parses multipart before req.body is available
@@ -237,10 +560,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       passport.authenticate('local', (err: any, user: any, info: any) => {
         if (err) {
           console.error("Error during login:", err);
+          try { log(`auth_login_error email=${(req.body as any)?.email}`); } catch {}
           return res.status(500).json({ message: "Login failed" });
         }
         
         if (!user) {
+          try { log(`auth_login_failed email=${(req.body as any)?.email}`); } catch {}
           return res.status(401).json({ message: info?.message || "Invalid credentials" });
         }
 
@@ -255,8 +580,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!fullUser) {
             return res.status(404).json({ message: "User not found" });
           }
+          try {
+            await storage.updateUserLastLogin(fullUser.id, new Date());
+          } catch {}
 
           // Return user without sensitive fields
+          try { log(`auth_login_success userId=${fullUser.id} role=${fullUser.role}`); } catch {}
           res.json(sanitizeUser(fullUser));
         });
       })(req, res, next);
@@ -275,6 +604,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("Error during logout:", err);
         return res.status(500).json({ message: "Logout failed" });
       }
+      try { log(`auth_logout userId=${(req.user as any)?.userId || 'unknown'}`); } catch {}
       res.json({ message: "Logged out successfully" });
     });
   });
@@ -292,6 +622,163 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
+
+  // Buyer profile endpoints
+  app.get('/api/buyer/profile', isAuthenticated, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.userId);
+      if (!user) return res.status(404).json({ message: 'User not found' });
+      res.json(sanitizeUser(user));
+    } catch (error) {
+      console.error('Fetch buyer profile error:', error);
+      res.status(500).json({ message: 'Failed to fetch profile' });
+    }
+  });
+
+  app.put('/api/buyer/profile', isAuthenticated, async (req: any, res) => {
+    try {
+      const { firstName, lastName, phone, defaultShippingAddress, notificationPrefs, shippingPrefs } = req.body || {};
+      const current = await storage.getUser(req.userId);
+      if (!current) return res.status(404).json({ message: 'User not found' });
+      const updated = await storage.upsertUser({
+        id: current.id,
+        email: current.email,
+        firstName: firstName ?? current.firstName,
+        lastName: lastName ?? current.lastName,
+        phone: phone ?? (current as any).phone ?? null,
+        defaultShippingAddress: defaultShippingAddress ?? (current as any).defaultShippingAddress ?? null,
+        notificationPrefs: notificationPrefs ?? (current as any).notificationPrefs ?? null,
+        shippingPrefs: shippingPrefs ?? (current as any).shippingPrefs ?? null,
+        role: current.role,
+      } as any);
+      res.json(sanitizeUser(updated));
+    } catch (error) {
+      console.error('Update buyer profile error:', error);
+      res.status(500).json({ message: 'Failed to update profile' });
+    }
+  });
+
+  app.post('/api/buyer/password', isAuthenticated, async (req: any, res) => {
+    try {
+      const { currentPassword, newPassword } = req.body || {};
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: 'Current and new password required' });
+      }
+      const user = await storage.getUser(req.userId);
+      if (!user || !user.passwordHash) return res.status(404).json({ message: 'User not found' });
+      const ok = await verifyPassword(currentPassword, user.passwordHash);
+      if (!ok) return res.status(400).json({ message: 'Current password is incorrect' });
+      const hash = await hashPassword(newPassword);
+      await storage.updatePassword(user.id, hash);
+      res.json({ message: 'Password updated' });
+    } catch (error) {
+      console.error('Change password error:', error);
+      res.status(500).json({ message: 'Failed to change password' });
+    }
+  });
+
+  // Buyer profile image upload
+  app.post('/api/buyer/profile/upload-image', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const dirForUser = path.join(process.cwd(), 'uploads', 'profiles', userId);
+      await fs.mkdir(dirForUser, { recursive: true });
+      const storageEngine = multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, dirForUser),
+        filename: (_req, file, cb) => {
+          const ext = path.extname(file.originalname).toLowerCase();
+          cb(null, `profile-${Date.now()}${ext}`);
+        },
+      });
+      const u = multer({
+        storage: storageEngine,
+        limits: { fileSize: 2 * 1024 * 1024 },
+        fileFilter: (_req, file, cb) => {
+          const ok = /^image\/(png|jpe?g|webp|gif)$/i.test(file.mimetype);
+          if (ok) cb(null, true); else cb(new Error('Invalid image type'));
+        }
+      }).single('image');
+      u(req, res, async (err: any) => {
+        if (err) return res.status(400).json({ message: err.message || 'Upload failed' });
+        if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+        const relativePath = path.relative(process.cwd(), req.file.path);
+        const url = `/${relativePath.replace(/\\/g, '/')}`;
+        const user = await storage.upsertUser({ id: userId, profileImageUrl: url } as any);
+        res.json({ imageUrl: url, user: sanitizeUser(user) });
+      });
+    } catch (error) {
+      console.error('Upload profile image error:', error);
+      res.status(500).json({ message: 'Failed to upload image' });
+    }
+  });
+
+  // Buyer order details with products
+  app.get('/api/buyer/orders/:id/details', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const order = await storage.getOrder(req.params.id);
+      if (!order || order.buyerId !== userId) return res.status(404).json({ message: 'Order not found' });
+      const items = await storage.getOrderItemsWithProductsForOrders([order.id]);
+      const list = items[order.id] || [];
+      const subtotal = list.reduce((s: number, it: any) => s + parseFloat(String(it.price)) * Number(it.quantity), 0);
+      const withItems = {
+        ...order,
+        total: String(order.total),
+        shippingCost: String((order as any).shippingCost ?? 0),
+        taxAmount: String((order as any).taxAmount ?? 0),
+        shippingMethod: (order as any).shippingMethod || null,
+        subtotal: String(subtotal),
+        items: list,
+      };
+      res.json(withItems);
+    } catch (error) {
+      console.error('Fetch buyer order details error:', error);
+      res.status(500).json({ message: 'Failed to fetch order details' });
+    }
+  });
+
+
+
+  // Vendors involved in an order
+  app.get('/api/orders/:id/vendors', isAuthenticated, async (req: any, res) => {
+    try {
+      const order = await storage.getOrder(req.params.id);
+      if (!order) return res.status(404).json({ message: 'Order not found' });
+      
+      const items = await storage.getOrderItems(order.id);
+      const storeIds = Array.from(new Set(items.map(i => i.storeId)));
+      const vendors: Array<{ storeId: string; storeName?: string; vendorId: string }> = [];
+      
+      // Check permissions
+      const user = await storage.getUser(req.userId);
+      let isAuthorized = false;
+
+      if (user?.role === 'admin' || order.buyerId === req.userId) {
+        isAuthorized = true;
+      }
+
+      for (const sid of storeIds) {
+        const store = await storage.getStore(sid);
+        if (store) {
+          vendors.push({ storeId: store.id, storeName: store.name, vendorId: store.vendorId });
+          // Ensure loose comparison or string coercion just in case
+          if (String(store.vendorId) === String(req.userId)) {
+            isAuthorized = true;
+          }
+        }
+      }
+
+      if (!isAuthorized) {
+        console.log(`[Auth Failure] /api/orders/${req.params.id}/vendors - User: ${req.userId}, Role: ${user?.role}, Buyer: ${order.buyerId}, Vendors in order: ${vendors.map(v => v.vendorId).join(',')}`);
+        return res.status(403).json({ message: 'Not authorized' });
+      }
+
+      res.json(vendors);
+    } catch (error) {
+      console.error('Fetch order vendors error:', error);
+      res.status(500).json({ message: 'Failed to fetch order vendors' });
     }
   });
 
@@ -342,7 +829,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Product browsing routes
   app.get('/api/products', async (req: any, res) => {
     try {
-      const { district, giBrand, minPrice, maxPrice, search, status, page, pageSize } = req.query;
+      const { district, giBrand, category, minPrice, maxPrice, search, status, page, pageSize } = req.query;
       
       const filters: any = {};
       
@@ -371,9 +858,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Everyone else (buyers, vendors via this endpoint, unauthenticated) only sees approved
         filters.status = 'approved';
       }
+
+      // Ensure archived products are hidden from non-admin browsing
+      if (userRole !== 'admin') {
+        filters.isActive = true;
+      }
       
       if (district) filters.district = district as string;
       if (giBrand) filters.giBrand = giBrand as string;
+      if (category) filters.category = category as string;
       if (minPrice) filters.minPrice = Number(minPrice);
       if (maxPrice) filters.maxPrice = Number(maxPrice);
       if (search) filters.search = search as string;
@@ -381,9 +874,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (pageSize) filters.pageSize = Number(pageSize);
 
       const { products, total } = await storage.getAllProducts(filters);
+
+      const productIds = products.map(p => p.id);
+      let statsMap: Record<string, { count: number; avg: number }> = {};
+      if (productIds.length > 0) {
+        try {
+          const rows = await db
+            .select({ productId: reviews.productId, count: sql<number>`COUNT(*)`, avg: sql<number>`AVG(${reviews.rating})` })
+            .from(reviews)
+            .where(and(inArray(reviews.productId, productIds), eq(reviews.status, 'approved')))
+            .groupBy(reviews.productId);
+          rows.forEach((r: any) => {
+            statsMap[r.productId] = { count: Number(r.count || 0), avg: Number(r.avg || 0) };
+          });
+        } catch {}
+      }
       
-      // Serialize product prices to strings for API response
-      const serializedProducts = products.map(serializeProduct);
+      // Serialize product prices and attach rating stats
+      const serializedProducts = products.map(p => ({
+        ...serializeProduct(p),
+        ratingAverage: statsMap[p.id]?.avg ?? 0,
+        ratingCount: statsMap[p.id]?.count ?? 0,
+      }));
       
       if (filters.page && filters.pageSize) {
         const totalPages = Math.ceil(total / filters.pageSize);
@@ -418,6 +930,134 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get('/api/products/:id/reviews', async (req, res) => {
+    try {
+      const productId = req.params.id as string;
+      const sort = (req.query.sort as string) || 'newest';
+      const list = await storage.getReviewsByProduct(productId, sort as any);
+      const approvedList = list.filter((r: any) => r.status === 'approved');
+      const userIds = Array.from(new Set(approvedList.map((r: any) => r.userId)));
+      let userMap: Record<string, { firstName: string | null; lastName: string | null; email: string | null }> = {};
+      if (userIds.length > 0) {
+        try {
+          const rows = await db
+            .select({ id: users.id, firstName: users.firstName, lastName: users.lastName, email: users.email })
+            .from(users)
+            .where(inArray(users.id, userIds));
+          rows.forEach((u: any) => {
+            userMap[u.id] = { firstName: u.firstName ?? null, lastName: u.lastName ?? null, email: u.email ?? null };
+          });
+        } catch {}
+      }
+      const withMedia = await Promise.all(approvedList.map(async (r: any) => ({
+        ...r,
+        media: await storage.getReviewMedia(r.id),
+        reviewerName: (() => {
+          const u = userMap[r.userId];
+          const full = [u?.firstName || '', u?.lastName || ''].join(' ').trim();
+          if (full) return full;
+          const email = u?.email || '';
+          return email ? String(email).split('@')[0] : '';
+        })(),
+      })));
+      const stats = await storage.getReviewStats(productId);
+      res.json({ reviews: withMedia, stats });
+    } catch (error) {
+      console.error('Error fetching reviews:', error);
+      res.status(500).json({ message: 'Failed to fetch reviews' });
+    }
+  });
+
+  app.post('/api/products/:id/reviews', isAuthenticated, async (req: any, res) => {
+    try {
+      const productId = req.params.id as string;
+      const userId = req.userId as string;
+      const rating = Number(req.body?.rating);
+      const comment = String(req.body?.comment || "").trim();
+      // Prevent duplicate reviews per user/product
+      const existing = await storage.getReviewsByProduct(productId, 'newest');
+      if (existing.some((r: any) => r.userId === userId)) {
+        return res.status(400).json({ message: 'You have already reviewed this product' });
+      }
+      if (!rating || rating < 0.5 || rating > 5 || Math.round(rating * 2) / 2 !== rating) {
+        return res.status(400).json({ message: 'Invalid rating' });
+      }
+      if (comment.length < 20 || comment.length > 500) {
+        return res.status(400).json({ message: 'Review must be 20-500 characters' });
+      }
+      const bad = ["spam", "fake", "scam"];
+      const lower = comment.toLowerCase();
+      const containsBad = bad.some(w => lower.includes(w));
+      const orders = await storage.getOrdersByBuyer(userId);
+      const orderIds = orders.map(o => o.id);
+      const itemsMap = await storage.getOrderItemsWithProductsForOrders(orderIds);
+      let verified = false;
+      for (const oid of Object.keys(itemsMap)) {
+        const items = itemsMap[oid];
+        if (items.some(i => i.productId === productId)) { verified = true; break; }
+      }
+      const status = containsBad ? 'pending' : 'approved';
+      const r = await storage.createReview({ productId, userId, rating: String(rating), comment, verifiedPurchase: verified, status });
+      // Notify vendor via internal message
+      const product = await storage.getProduct(productId);
+      if (product) {
+        const store = await storage.getStore(product.storeId);
+        if (store) {
+          try {
+            await storage.createMessage({ senderId: userId, receiverId: store.vendorId, message: `New review on ${product.title}: ${comment.substring(0, 120)}...` });
+          } catch {}
+        }
+      }
+      res.json(r);
+    } catch (error) {
+      console.error('Error creating review:', error);
+      res.status(500).json({ message: 'Failed to create review' });
+    }
+  });
+
+  app.post('/api/reviews/:id/vote', isAuthenticated, async (req: any, res) => {
+    try {
+      const reviewId = req.params.id as string;
+      const userId = req.userId as string;
+      const v = String(req.body?.value);
+      const value = v === 'up' ? 1 : v === 'down' ? -1 : 0;
+      if (!value) return res.status(400).json({ message: 'Invalid vote' });
+      const result = await storage.upsertReviewVote(reviewId, userId, value as 1 | -1);
+      res.json(result);
+    } catch (error) {
+      console.error('Vote error:', error);
+      res.status(500).json({ message: 'Failed to vote' });
+    }
+  });
+
+  app.post('/api/reviews/:id/media/upload', isAuthenticated, async (req: any, res) => {
+    try {
+      const reviewId = req.params.id as string;
+      const type = (req.query.type as string) || 'image';
+      // For simplicity, accept only single file via raw buffer
+      const dir = path.join(process.cwd(), 'uploads', 'reviews', reviewId);
+      await fs.mkdir(dir, { recursive: true });
+      const chunks: Buffer[] = [];
+      let size = 0;
+      req.on('data', (c: Buffer) => { chunks.push(c); size += c.length; });
+      req.on('end', async () => {
+        if (size > 10 * 1024 * 1024) { // 10MB limit
+          return res.status(400).json({ message: 'File too large (max 10MB)' });
+        }
+        const ext = type === 'video' ? 'mp4' : 'png';
+        const name = `upload-${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`;
+        const filePath = path.join(dir, name);
+        await fs.writeFile(filePath, Buffer.concat(chunks));
+        const url = `/uploads/reviews/${reviewId}/${name}`;
+        await storage.addReviewMedia(reviewId, url, type);
+        res.json({ url });
+      });
+    } catch (error) {
+      console.error('Media upload error:', error);
+      res.status(500).json({ message: 'Failed to upload media' });
+    }
+  });
+
   // Store routes
   app.get('/api/stores', async (req, res) => {
     try {
@@ -443,6 +1083,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get('/api/stores/:id/products', async (req: any, res) => {
+    try {
+      const storeId = req.params.id as string;
+      const list = await storage.getProductsByStore(storeId);
+      const filtered = list
+        .filter((p: any) => String(p.status || '').toLowerCase() === 'approved')
+        .filter((p: any) => !!p.isActive);
+
+      const productIds = filtered.map(p => p.id);
+      let statsMap: Record<string, { count: number; avg: number }> = {};
+      if (productIds.length > 0) {
+        try {
+          const rows = await db
+            .select({ productId: reviews.productId, count: sql<number>`COUNT(*)`, avg: sql<number>`AVG(${reviews.rating})` })
+            .from(reviews)
+            .where(and(inArray(reviews.productId, productIds), eq(reviews.status, 'approved')))
+            .groupBy(reviews.productId);
+          rows.forEach((r: any) => {
+            statsMap[r.productId] = { count: Number(r.count || 0), avg: Number(r.avg || 0) };
+          });
+        } catch {}
+      }
+
+      const serialized = filtered.map(p => ({
+        ...serializeProduct(p),
+        ratingAverage: statsMap[p.id]?.avg ?? 0,
+        ratingCount: statsMap[p.id]?.count ?? 0,
+      }));
+      res.json(serialized);
+    } catch (error) {
+      console.error('Error fetching store products:', error);
+      res.status(500).json({ message: 'Failed to fetch products for store' });
+    }
+  });
+
   // Category routes
   app.get('/api/categories', async (req, res) => {
     try {
@@ -451,6 +1126,194 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching categories:", error);
       res.status(500).json({ message: "Failed to fetch categories" });
+    }
+  });
+
+  // Product Category routes
+  app.get('/api/product-categories', async (_req, res) => {
+    try {
+      await ensureProductCategoriesSchema();
+      const list = await storage.getAllProductCategories();
+      res.json(list);
+    } catch (error) {
+      console.error('Error fetching product categories:', error);
+      res.status(500).json({ message: 'Failed to fetch product categories' });
+    }
+  });
+
+  app.post('/api/admin/product-categories', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      await ensureProductCategoriesSchema();
+      const { name, description } = req.body || {};
+      if (!name || String(name).trim().length === 0) {
+        return res.status(400).json({ message: 'Name is required' });
+      }
+      const toSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const payload = { name: String(name).trim(), slug: toSlug(String(name)), description: description ? String(description) : null } as any;
+      const created = await storage.createProductCategory(payload);
+      try {
+        await db.insert(configAudits).values({ entityType: 'product_category', entityId: created.id as any, action: 'create', changes: payload, changedBy: req.userId } as any);
+      } catch {}
+      res.status(201).json(created);
+    } catch (error: any) {
+      const msg = (error && error.message) || 'Failed to create product category';
+      res.status(500).json({ message: msg });
+    }
+  });
+
+  app.put('/api/admin/product-categories/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      await ensureProductCategoriesSchema();
+      const id = req.params.id as string;
+      const { name, description } = req.body || {};
+      const updates: any = {};
+      if (name != null) {
+        const nm = String(name).trim();
+        updates.name = nm;
+        const toSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+        updates.slug = toSlug(nm);
+      }
+      if (description != null) updates.description = description ? String(description) : null;
+      const updated = await storage.updateProductCategory(id, updates);
+      try {
+        await db.insert(configAudits).values({ entityType: 'product_category', entityId: id, action: 'update', changes: updates, changedBy: req.userId } as any);
+      } catch {}
+      res.json(updated);
+    } catch (error) {
+      console.error('Error updating product category:', error);
+      res.status(500).json({ message: 'Failed to update product category' });
+    }
+  });
+
+  app.delete('/api/admin/product-categories/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      await ensureProductCategoriesSchema();
+      const id = req.params.id as string;
+      await storage.deleteProductCategory(id);
+      try {
+        await db.insert(configAudits).values({ entityType: 'product_category', entityId: id, action: 'delete', changes: null as any, changedBy: req.userId } as any);
+      } catch {}
+      res.json({ deleted: id });
+    } catch (error) {
+      console.error('Error deleting product category:', error);
+      res.status(500).json({ message: 'Failed to delete product category' });
+    }
+  });
+
+  app.get('/api/guide/resources', async (_req, res) => {
+    const resources = [
+      { id: 'getting-started', title: 'Getting Started Guide', description: 'How to set up your store' },
+      { id: 'product-listing', title: 'Product Listing Checklist', description: 'Best practices for listings' },
+    ];
+    res.json(resources);
+  });
+
+  app.get('/api/guide/resources/:id/download', async (req, res) => {
+    const { id } = req.params as { id: string };
+    const content = `Resource: ${id}\n\nThis is a downloadable resource for vendors.`;
+    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Content-Disposition', `attachment; filename="${id}.txt"`);
+    res.send(content);
+  });
+
+  app.get('/api/brands/:slug', async (req, res) => {
+    try {
+      const { slug } = req.params as { slug: string };
+      const categories = await storage.getAllCategories();
+      const brandSet = new Set(categories.map(c => c.giBrand));
+      const toSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const brandMap = new Map(Array.from(brandSet).map(b => [toSlug(b), b]));
+      const brandName = brandMap.get(slug);
+      if (!brandName) {
+        return res.status(404).json({ message: "Brand not found" });
+      }
+      const brandCategories = categories.filter(c => c.giBrand === brandName);
+      const districts = brandCategories.map(c => c.district);
+      const crafts = Array.from(new Set(brandCategories.flatMap(c => c.crafts)));
+      const { products } = await storage.getAllProducts({ giBrand: brandName, status: 'approved', page: 1, pageSize: 12 });
+      const serializedProducts = products.map(p => ({ ...p, price: String(p.price) }));
+      const seoTitle = `${brandName} | Authentic Punjab Handicrafts`;
+      const seoDescription = `Discover ${brandName} from ${districts.join(', ')}. Shop authentic crafts from Punjab artisans.`;
+      res.json({ name: brandName, slug, districts, crafts, products: serializedProducts, seo: { title: seoTitle, description: seoDescription } });
+    } catch (error) {
+      console.error("Error fetching brand:", error);
+      res.status(500).json({ message: "Failed to fetch brand" });
+    }
+  });
+
+  app.post('/api/vendor/verification/upload', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const storeId = req.query.storeId;
+      if (!storeId) {
+        return res.status(400).json({ message: "Store ID is required in query string" });
+      }
+
+      const store = await storage.getStore(storeId);
+      if (!store) {
+        return res.status(404).json({ message: "Store not found" });
+      }
+      if (store.vendorId !== req.userId && req.userRole !== "admin") {
+        return res.status(403).json({ message: "Not authorized to upload documents for this store" });
+      }
+
+      uploadVerification.array('files', 10)(req, res, (err) => {
+        if (err instanceof multer.MulterError) {
+          if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({ message: 'File size cannot exceed 10MB' });
+          }
+          if (err.code === 'LIMIT_FILE_COUNT') {
+            return res.status(400).json({ message: 'Cannot upload more than 10 files' });
+          }
+          return res.status(400).json({ message: err.message });
+        } else if (err) {
+          return res.status(400).json({ message: err.message });
+        }
+
+        const files = req.files as Express.Multer.File[];
+        if (!files || files.length === 0) {
+          return res.status(400).json({ message: 'No files uploaded' });
+        }
+
+        const docPaths = files.map(file => {
+          const relativePath = path.relative(process.cwd(), file.path);
+          return `/${relativePath.replace(/\\/g, '/')}`;
+        });
+        res.json({ documents: docPaths });
+      });
+    } catch (error) {
+      console.error('Upload error:', error);
+      res.status(500).json({ message: 'Upload failed' });
+    }
+  });
+
+  app.get('/api/vendor/verification/docs', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const storeId = req.query.storeId as string;
+      if (!storeId) return res.status(400).json({ message: 'storeId required' });
+      const dir = path.join(process.cwd(), 'uploads', 'verification', storeId);
+      const exists = await fs
+        .access(dir)
+        .then(() => true)
+        .catch(() => false);
+      if (!exists) return res.json([]);
+      const files = await fs.readdir(dir);
+      const items = files.map((name: string) => ({ name, url: `/uploads/verification/${storeId}/${name}` }));
+      res.json(items);
+    } catch (error) {
+      console.error('Docs list error:', error);
+      res.status(500).json({ message: 'Failed to list docs' });
+    }
+  });
+
+  app.post('/api/vendor/verification/submit', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const { storeId } = req.body as { storeId: string };
+      if (!storeId) return res.status(400).json({ message: 'storeId required' });
+      await storage.updateStoreStatus(storeId, 'pending');
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Submit verification error:', error);
+      res.status(500).json({ message: 'Failed to submit verification' });
     }
   });
 
@@ -507,10 +1370,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get('/api/vendor/stores/:id/deactivation-reason', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const storeId = req.params.id;
+      const store = await storage.getStore(storeId);
+      if (!store) {
+        return res.status(404).json({ message: 'Store not found' });
+      }
+      // Only vendor owner or admin can view reason
+      const isOwner = store.vendorId === req.userId || req.userRole === 'admin';
+      if (!isOwner) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      const rows = await db
+        .select()
+        .from(configAudits)
+        .where(and(eq(configAudits.entityType, 'store_status'), eq(configAudits.entityId, storeId)))
+        .orderBy(desc(configAudits.createdAt))
+        .limit(1);
+      const last = rows[0] as any;
+      const changes = last?.changes || {};
+      const reason = changes?.reason ?? null;
+      res.json({ status: store.status, reason });
+    } catch (error) {
+      console.error('Error fetching deactivation reason:', error);
+      res.status(500).json({ message: 'Failed to fetch deactivation reason' });
+    }
+  });
+
   // Vendor Product Management Routes
   app.post('/api/products', isAuthenticated, isVendor, async (req: any, res) => {
     try {
-      const { storeId, ...productData } = req.body;
+      const { storeId, variants, ...productData } = req.body;
       const store = await storage.getStore(storeId);
       
       if (!store) {
@@ -521,7 +1412,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Not authorized to add products to this store" });
       }
 
-      const validatedData = insertProductSchema.parse({ storeId, ...productData });
+      const processedVariants = variants && typeof variants === 'object' ? JSON.stringify(variants) : variants;
+      const validatedData = insertProductSchema.parse({ storeId, variants: processedVariants, ...productData });
       const product = await storage.createProduct(validatedData);
       res.status(201).json(serializeProduct(product));
     } catch (error: any) {
@@ -547,7 +1439,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Not authorized to update this product" });
       }
 
-      const { storeId, ...sanitizedUpdates } = insertProductSchema.partial().parse(req.body);
+      const { storeId, variants, ...updateData } = req.body;
+      const processedVariants = variants && typeof variants === 'object' ? JSON.stringify(variants) : variants;
+      const { ...sanitizedUpdates } = insertProductSchema.partial().parse({ variants: processedVariants, ...updateData });
+      
       const updatedProduct = await storage.updateProduct(productId, sanitizedUpdates);
       if (!updatedProduct) {
         return res.status(404).json({ message: "Product not found after update" });
@@ -563,8 +1458,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete('/api/products/:id', isAuthenticated, isVendor, async (req: any, res) => {
+    const productId = req.params.id;
     try {
-      const productId = req.params.id;
       const existingProduct = await storage.getProduct(productId);
       
       if (!existingProduct) {
@@ -576,8 +1471,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Not authorized to delete this product" });
       }
 
-      await storage.deleteProduct(productId);
-      res.status(204).send();
+      try {
+        await storage.deleteProduct(productId);
+        return res.status(204).send();
+      } catch (err: any) {
+        // If product is referenced by orders, archive (soft delete) instead
+        if (String(err?.code) === '23503' || /foreign key/i.test(String(err?.message || ''))) {
+          const updated = await storage.updateProductActiveStatus(productId, false);
+          return res.status(200).json(serializeProduct(updated!));
+        }
+        throw err;
+      }
     } catch (error) {
       console.error("Error deleting product:", error);
       res.status(500).json({ message: "Failed to delete product" });
@@ -612,12 +1516,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Not authorized to edit this product" });
       }
 
-      const { storeId, ...updateFields } = req.body;
+      const { storeId, variants, ...updateFields } = req.body;
       if (storeId !== undefined) {
         return res.status(400).json({ message: "Cannot change product store" });
       }
 
-      const validatedData = insertProductSchema.partial().parse(updateFields);
+      const processedVariants = variants && typeof variants === 'object' ? JSON.stringify(variants) : variants;
+      const validatedData = insertProductSchema.partial().parse({ variants: processedVariants, ...updateFields });
       const updatedProduct = await storage.updateProduct(productId, validatedData);
       res.json(serializeProduct(updatedProduct!));
     } catch (error: any) {
@@ -630,8 +1535,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete('/api/vendor/products/:id', isAuthenticated, isVendor, async (req: any, res) => {
+    const productId = req.params.id;
     try {
-      const productId = req.params.id;
       const existingProduct = await storage.getProduct(productId);
       
       if (!existingProduct) {
@@ -643,8 +1548,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Not authorized to delete this product" });
       }
 
-      await storage.deleteProduct(productId);
-      res.status(204).send();
+      try {
+        await storage.deleteProduct(productId);
+        return res.status(204).send();
+      } catch (err: any) {
+        // If product is referenced by orders, archive (soft delete) instead
+        if (String(err?.code) === '23503' || /foreign key/i.test(String(err?.message || ''))) {
+          const updated = await storage.updateProductActiveStatus(productId, false);
+          return res.status(200).json(serializeProduct(updated!));
+        }
+        throw err;
+      }
     } catch (error) {
       console.error("Error deleting product:", error);
       res.status(500).json({ message: "Failed to delete product" });
@@ -827,7 +1741,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         stores.map(store => storage.getPromotionsByStore(store.id))
       );
       const promotions = allPromotions.flat();
-      res.json(promotions);
+      const ids = promotions.map(p => p.id);
+      let stats: Record<string, { productCount: number; lastAddedAt: string | null; lastRemovedAt: string | null }> = {};
+      try {
+        stats = await storage.getPromotionStatsForPromotions(ids);
+      } catch (e) {
+        const counts = await Promise.all(ids.map(async (id) => {
+          const items = await storage.getPromotionProducts(id);
+          return { id, count: items.length };
+        }));
+        stats = Object.fromEntries(counts.map(c => [c.id, { productCount: c.count, lastAddedAt: null, lastRemovedAt: null }]));
+      }
+      const enriched = promotions.map(p => ({
+        ...p,
+        productCount: stats[p.id]?.productCount ?? 0,
+        lastAddedAt: stats[p.id]?.lastAddedAt ?? null,
+        lastRemovedAt: stats[p.id]?.lastRemovedAt ?? null,
+      }));
+      res.json(enriched);
     } catch (error) {
       console.error("Error fetching promotions:", error);
       res.status(500).json({ message: "Failed to fetch promotions" });
@@ -940,33 +1871,466 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  const bulkPromotionProductsSchema = z.object({
+    items: z.array(z.object({
+      productId: z.string(),
+      overridePrice: z.string().optional(),
+      quantityLimit: z.number().int().min(0).optional(),
+      conditions: z.any().optional(),
+    })).min(1),
+  });
+
+  app.get('/api/vendor/promotions/:id/products', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const promotionId = req.params.id;
+      const promotion = await storage.getPromotion(promotionId);
+      if (!promotion) return res.status(404).json({ message: 'Promotion not found' });
+      const store = await storage.getStore(promotion.storeId);
+      if (!store || store.vendorId !== req.userId) {
+        return res.status(403).json({ message: 'Not authorized to view this promotion' });
+      }
+      const list = await storage.getPromotionProductsWithDetails(promotionId);
+      const now = Date.now();
+      const enriched = list.map(item => {
+        const startOk = !promotion.startAt || new Date(promotion.startAt).getTime() <= now;
+        const endOk = !promotion.endAt || new Date(promotion.endAt).getTime() >= now;
+        const isActive = promotion.status === 'active' && startOk && endOk;
+        return { ...item, isActive };
+      });
+      res.json(enriched);
+    } catch (error) {
+      console.error('Error fetching promotion products:', error);
+      res.status(500).json({ message: 'Failed to fetch promotion products' });
+    }
+  });
+
+  app.get('/api/vendor/promotion-products', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const stores = await storage.getStoresByVendor(req.userId);
+      const all = await Promise.all(stores.map(s => storage.getPromotionProductsByStoreWithPromotions(s.id)));
+      const flat = all.flat();
+      const now = Date.now();
+      const enriched = flat.map(item => {
+        const p = item.promotion;
+        const startOk = !p.startAt || new Date(p.startAt).getTime() <= now;
+        const endOk = !p.endAt || new Date(p.endAt).getTime() >= now;
+        const isActive = p.status === 'active' && startOk && endOk;
+        return { ...item, isActive };
+      });
+      res.json(enriched);
+    } catch (error) {
+      console.error('Error fetching promotion-products:', error);
+      res.status(500).json({ message: 'Failed to fetch promotion-products' });
+    }
+  });
+
+  app.get('/api/promotions/active-by-products', async (req: any, res) => {
+    try {
+      const idsParam = (req.query.ids as string) || '';
+      const ids = idsParam.split(',').map(s => s.trim()).filter(Boolean);
+      if (ids.length === 0) {
+        return res.json([]);
+      }
+      const rows = await db
+        .select()
+        .from(promotionProducts)
+        .where(inArray(promotionProducts.productId, ids));
+      const promoIds = Array.from(new Set(rows.map(r => r.promotionId))).filter(Boolean);
+      const promos = promoIds.length ? await db.select().from(promotions).where(inArray(promotions.id, promoIds)) : [];
+      const pmap = new Map(promos.map(p => [p.id, p]));
+      const now = Date.now();
+      const out: Array<{ productId: string; promotionId: string; type: string; value: string; endAt: string | null }> = [];
+      for (const r of rows) {
+        const p = pmap.get(r.promotionId);
+        if (!p) continue;
+        const startOk = !p.startAt || new Date(p.startAt).getTime() <= now;
+        const endOk = !p.endAt || new Date(p.endAt).getTime() >= now;
+        const isActive = p.status === 'active' && startOk && endOk;
+        if (!isActive) continue;
+        out.push({ productId: r.productId, promotionId: r.promotionId, type: p.type, value: String(p.value), endAt: p.endAt ? String(p.endAt) : null });
+      }
+      res.json(out);
+    } catch (error) {
+      console.error('Error fetching active promotions by products:', error);
+      res.status(500).json({ message: 'Failed to fetch promotions' });
+    }
+  });
+
+  app.post('/api/vendor/promotions/:id/products/bulk', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const promotionId = req.params.id;
+      const promotion = await storage.getPromotion(promotionId);
+      if (!promotion) return res.status(404).json({ message: 'Promotion not found' });
+      const store = await storage.getStore(promotion.storeId);
+      if (!store || store.vendorId !== req.userId) {
+        return res.status(403).json({ message: 'Not authorized to modify this promotion' });
+      }
+
+      const { items } = bulkPromotionProductsSchema.parse(req.body);
+
+      const productIds = items.map(i => i.productId);
+      const productsList = await Promise.all(productIds.map(id => storage.getProduct(id)));
+      const invalid: string[] = [];
+      const productMap = new Map((productsList || []).filter(Boolean).map((p: any) => [p.id, p]));
+      const eligibleItems = items.filter((i) => {
+        const p = productMap.get(i.productId) as any;
+        if (!p) { invalid.push(i.productId); return false; }
+        if (p.storeId !== store.id) { invalid.push(i.productId); return false; }
+        if (p.status !== 'approved') { invalid.push(i.productId); return false; }
+        if (p.stock <= 0) { invalid.push(i.productId); return false; }
+        if (typeof i.quantityLimit === 'number' && i.quantityLimit > p.stock) { invalid.push(i.productId); return false; }
+        return true;
+      });
+
+      if (eligibleItems.length === 0) {
+        return res.status(400).json({ message: 'No eligible products to add', invalid });
+      }
+
+      const effectiveItems = eligibleItems.map((i) => {
+        const p = productMap.get(i.productId) as any;
+        let overridePrice = i.overridePrice;
+        if (!overridePrice && promotion.type === 'percentage' && p?.price != null) {
+          const priceNum = parseFloat(String(p.price));
+          const pct = parseFloat(String(promotion.value));
+          const discounted = Math.max(0, priceNum * (100 - pct) / 100);
+          overridePrice = discounted.toFixed(2);
+        }
+        return { ...i, overridePrice };
+      });
+
+      const inserted = await storage.addProductsToPromotionBulk(promotionId, effectiveItems);
+
+      for (const ins of inserted) {
+        try {
+          await db.insert(promotionProductHistory).values({
+            promotionId: ins.promotionId,
+            productId: ins.productId,
+            changeType: 'add',
+            changes: { overridePrice: ins.overridePrice, quantityLimit: ins.quantityLimit, conditions: ins.conditions },
+            changedBy: req.userId,
+          });
+        } catch {}
+      }
+
+      res.status(201).json({ added: inserted.length, invalid });
+    } catch (error: any) {
+      console.error('Error adding products to promotion:', error);
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: 'Invalid payload', errors: error.errors });
+      }
+      res.status(500).json({ message: 'Failed to add products to promotion' });
+    }
+  });
+
+  app.post('/api/vendor/promotions/:id/products/remove', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const promotionId = req.params.id;
+      const promotion = await storage.getPromotion(promotionId);
+      if (!promotion) return res.status(404).json({ message: 'Promotion not found' });
+      const store = await storage.getStore(promotion.storeId);
+      if (!store || store.vendorId !== req.userId) {
+        return res.status(403).json({ message: 'Not authorized to modify this promotion' });
+      }
+
+      const ids = (req.body?.productIds as string[]) || [];
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ message: 'productIds array required' });
+      }
+
+      await storage.removeProductsFromPromotionBulk(promotionId, ids);
+
+      for (const pid of ids) {
+        try {
+          await db.insert(promotionProductHistory).values({
+            promotionId,
+            productId: pid,
+            changeType: 'remove',
+            changedBy: req.userId,
+          });
+        } catch {}
+      }
+
+      res.json({ removed: ids.length });
+    } catch (error) {
+      console.error('Error removing promotion products:', error);
+      res.status(500).json({ message: 'Failed to remove promotion products' });
+    }
+  });
+
   // Order Management Routes
+  app.post('/api/checkout/calculate', async (req: any, res) => {
+    try {
+      await ensureOrderSchema();
+      await ensureTaxShipSchema();
+      const userId = req.userId || 'anonymous';
+      const { items, shippingAddress, shippingStreet, shippingCity, shippingProvince, shippingPostalCode, shippingCountry, shippingMethod } = req.body as { items: Array<{ productId: string; storeId: string; quantity: number; price?: string }>; shippingAddress?: string; shippingStreet?: string; shippingCity?: string; shippingProvince?: string; shippingPostalCode?: string; shippingCountry?: string; shippingMethod?: string };
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ message: 'Items required' });
+      }
+
+      const productIds: string[] = items.map(i => i.productId);
+      const productsList = await Promise.all(productIds.map((id) => storage.getProduct(id)));
+      const productMap = new Map((productsList || []).filter(Boolean).map((p: any) => [p.id, p]));
+      const normalized = items.map(i => ({
+        productId: i.productId,
+        storeId: i.storeId,
+        quantity: i.quantity,
+        price: (i.price ?? String(productMap.get(i.productId)?.price ?? '0')),
+        weightKg: productMap.get(i.productId)?.weightKg ? parseFloat(String(productMap.get(i.productId)?.weightKg)) : undefined,
+        lengthCm: productMap.get(i.productId)?.lengthCm ? parseFloat(String(productMap.get(i.productId)?.lengthCm)) : undefined,
+        widthCm: productMap.get(i.productId)?.widthCm ? parseFloat(String(productMap.get(i.productId)?.widthCm)) : undefined,
+        heightCm: productMap.get(i.productId)?.heightCm ? parseFloat(String(productMap.get(i.productId)?.heightCm)) : undefined,
+        productCategory: productMap.get(i.productId)?.category,
+        taxExempt: !!productMap.get(i.productId)?.taxExempt,
+      }));
+      const subtotal = normalized.reduce((s, it) => s + parseFloat(String(it.price)) * Number(it.quantity), 0);
+      const province = shippingProvince || detectProvince(shippingAddress || [shippingStreet, shippingCity, shippingProvince, shippingPostalCode, shippingCountry].filter(Boolean).join(', '));
+      const taxRes = await computeTax(normalized, province, userId);
+      const shipRes = await computeShipping(normalized, province, shippingMethod);
+      const total = subtotal + taxRes.amount + shipRes.amount;
+      res.json({ subtotal: subtotal.toFixed(2), taxes: taxRes.amount.toFixed(2), shipping: shipRes.amount.toFixed(2), total: total.toFixed(2), taxDetails: taxRes.breakdown, carrier: shipRes.carrier, province: province || null, method: (shippingMethod || 'standard') });
+    } catch (error) {
+      console.error('Checkout calculate error:', error);
+      res.status(500).json({ message: 'Failed to calculate' });
+    }
+  });
   app.post('/api/orders', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
-      const { items, ...orderData } = req.body;
-      
+      await ensureOrderSchema();
+      await ensureTaxShipSchema();
+      const userId = req.userId;
+      const { items, paymentMethod, phoneNumber, preferredCommunication, saveInfo,
+        recipientName, recipientEmail,
+        shippingStreet, shippingApartment, shippingCity, shippingProvince, shippingPostalCode, shippingCountry,
+        billingSameAsShipping, billingStreet, billingApartment, billingCity, billingProvince, billingPostalCode, billingCountry,
+        specialInstructions,
+      } = req.body;
       if (!items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ message: "Order must contain at least one item" });
       }
+      const composedShippingAddress = [shippingStreet, shippingApartment, shippingCity, shippingProvince, shippingPostalCode, shippingCountry].filter(Boolean).join(', ');
+      const shippingAddress = composedShippingAddress || '';
+      if (!shippingStreet || !shippingCity || !shippingProvince) {
+        return res.status(400).json({ message: "Complete shipping address is required" });
+      }
+
+      const lowerMethod = 'cod';
+      if (lowerMethod === 'cod') {
+        const addr = String(shippingAddress).trim();
+        if (addr.length < 10) {
+          return res.status(400).json({ message: "Shipping address appears incomplete" });
+        }
+        if (!phoneNumber || typeof phoneNumber !== 'string' || phoneNumber.trim().length < 7) {
+          return res.status(400).json({ message: "Phone number required for COD" });
+        }
+      }
+
+      let totalComputed = 0;
+      const validatedItems: any[] = [];
+      const productIds: string[] = items.map((i: any) => i.productId);
+      const productsList = await Promise.all(productIds.map((id) => storage.getProduct(id)));
+      const productMap = new Map((productsList || []).filter(Boolean).map((p: any) => [p.id, p]));
+
+      // Determine active promotions for the products in this order and compute best effective prices
+      const promoRows = productIds.length
+        ? await db.select().from(promotionProducts).where(inArray(promotionProducts.productId, productIds))
+        : [];
+      const promoIds = Array.from(new Set(promoRows.map((r: any) => r.promotionId))).filter(Boolean);
+      const promos = promoIds.length
+        ? await db.select().from(promotions).where(inArray(promotions.id, promoIds))
+        : [];
+      const promoById = new Map(promos.map((p: any) => [p.id, p]));
+      const now = Date.now();
+      const activeByProduct: Record<string, Array<{ type: string; value: string; overridePrice: string | null; minQuantity: number }>> = {};
+      for (const r of promoRows as any[]) {
+        const p = promoById.get(r.promotionId);
+        if (!p) continue;
+        const startOk = !p.startAt || new Date(p.startAt as any).getTime() <= now;
+        const endOk = !p.endAt || new Date(p.endAt as any).getTime() >= now;
+        const isActive = String(p.status) === 'active' && startOk && endOk;
+        if (!isActive) continue;
+        const arr = activeByProduct[r.productId] || [];
+        arr.push({ type: String(p.type), value: String(p.value), overridePrice: r.overridePrice ? String(r.overridePrice) : null, minQuantity: Number(p.minQuantity || 1) });
+        activeByProduct[r.productId] = arr;
+      }
+
+      log(`Order create start: user=${userId} items=${items.length}`);
+
+      for (const item of items) {
+        const product = productMap.get(item.productId);
+        if (!product) return res.status(404).json({ message: "Product not found" });
+        if (product.status !== 'approved' || product.isActive !== true) {
+          return res.status(400).json({ message: "Product not available" });
+        }
+        if (item.quantity <= 0 || item.quantity > product.stock) {
+          return res.status(400).json({ message: "Insufficient stock for product" });
+        }
+        if (lowerMethod === 'cod') {
+          const store = await storage.getStore(product.storeId);
+          if (!store || store.status !== 'approved') {
+            return res.status(400).json({ message: "COD not available for selected items" });
+          }
+        }
+
+        const base = parseFloat(String(product.price));
+        let effectivePrice = base;
+        const applicablePromos = (activeByProduct[item.productId] || []).filter(p => item.quantity >= p.minQuantity);
+        const candidates: number[] = [base];
+        for (const ap of applicablePromos) {
+          if (ap.overridePrice != null) {
+            const v = parseFloat(ap.overridePrice);
+            if (!Number.isNaN(v)) candidates.push(Math.max(0, v));
+            continue;
+          }
+          const valNum = parseFloat(ap.value);
+          if (ap.type === 'percentage' && !Number.isNaN(valNum)) {
+            candidates.push(Math.max(0, base * (100 - valNum) / 100));
+          } else if (ap.type === 'fixed' && !Number.isNaN(valNum)) {
+            candidates.push(Math.max(0, base - valNum));
+          }
+        }
+        effectivePrice = Number(Math.min(...candidates).toFixed(2));
+        const discountedApplied = effectivePrice < base;
+        log(`Item pricing: product=${item.productId} qty=${item.quantity} base=${base} effective=${effectivePrice} discounted=${discountedApplied}`);
+
+        totalComputed += effectivePrice * item.quantity;
+        validatedItems.push({
+          orderId: '',
+          productId: item.productId,
+          storeId: product.storeId,
+          quantity: item.quantity,
+          price: effectivePrice.toFixed(2),
+        });
+      }
+
+      const sumItems = validatedItems.reduce((s, it) => s + parseFloat(String(it.price)) * Number(it.quantity), 0);
+      if (Math.abs(sumItems - totalComputed) > 0.01) {
+        log(`Order total adjustment: computed=${totalComputed} sumItems=${sumItems}`);
+        totalComputed = parseFloat(sumItems.toFixed(2));
+      }
+
+      if (lowerMethod === 'cod') {
+        if (totalComputed > 100000) {
+          return res.status(400).json({ message: "COD not available for high-value orders" });
+        }
+        const codRiskStrict = ((process.env.COD_RISK_CHECK_STRICT || 'false').toLowerCase() === 'true');
+        if (codRiskStrict) {
+          const buyerOrders = await storage.getOrdersByBuyer(userId);
+          const nowMs = Date.now();
+          const recentCancelled = buyerOrders.filter(o => o.status === 'cancelled' && (nowMs - new Date(o.createdAt as any).getTime()) < (30 * 24 * 60 * 60 * 1000)).length;
+          if (recentCancelled >= 2) {
+            log(`COD risk check enforced: user=${userId} recentCancelled=${recentCancelled}`);
+            return res.status(400).json({ message: `COD not available due to risk (${recentCancelled} cancellations in 30 days)` });
+          }
+        } else {
+          log(`COD risk check bypassed for user=${userId}`);
+        }
+      }
+
+      const province = shippingProvince || detectProvince(shippingAddress);
+      const taxRes = await computeTax(validatedItems.map(it => ({ productId: it.productId, quantity: it.quantity, price: it.price, productCategory: productMap.get(it.productId)?.category, taxExempt: !!productMap.get(it.productId)?.taxExempt })), province, userId);
+      const shipRes = await computeShipping(validatedItems.map(it => ({ productId: it.productId, quantity: it.quantity, price: it.price, weightKg: productMap.get(it.productId)?.weightKg ? parseFloat(String(productMap.get(it.productId)?.weightKg)) : undefined, lengthCm: productMap.get(it.productId)?.lengthCm ? parseFloat(String(productMap.get(it.productId)?.lengthCm)) : undefined, widthCm: productMap.get(it.productId)?.widthCm ? parseFloat(String(productMap.get(it.productId)?.widthCm)) : undefined, heightCm: productMap.get(it.productId)?.heightCm ? parseFloat(String(productMap.get(it.productId)?.heightCm)) : undefined })), province, (String(req.body.shippingMethod || 'standard')));
+      const finalTotal = parseFloat((totalComputed + taxRes.amount + shipRes.amount).toFixed(2));
+      const estimatedDelivery = lowerMethod === 'cod' ? '3-7 business days' : '2-5 business days';
+      const orderRef = `PH-${new Date().toISOString().replace(/[-:T\.Z]/g, '').slice(0, 12)}`;
 
       const validatedOrder = insertOrderSchema.parse({
-        ...orderData,
         buyerId: userId,
+        total: finalTotal.toFixed(2),
+        status: 'pending',
+        paymentMethod: lowerMethod || null,
+        shippingAddress,
+        recipientName: recipientName || null,
+        recipientEmail: recipientEmail || null,
+        shippingStreet: shippingStreet || null,
+        shippingApartment: shippingApartment || null,
+        shippingCity: shippingCity || null,
+        shippingPhone: phoneNumber || null,
+        shippingProvince: province || null,
+        shippingPostalCode: shippingPostalCode || null,
+        shippingCountry: shippingCountry || 'Pakistan',
+        shippingMethod: (String(req.body.shippingMethod || 'standard')),
+        shippingCost: shipRes.amount.toFixed(2),
+        specialInstructions: specialInstructions || null,
+        billingSameAsShipping: !!billingSameAsShipping,
+        billingStreet: billingSameAsShipping ? null : (billingStreet || null),
+        billingApartment: billingSameAsShipping ? null : (billingApartment || null),
+        billingCity: billingSameAsShipping ? null : (billingCity || null),
+        billingProvince: billingSameAsShipping ? null : (billingProvince || null),
+        billingPostalCode: billingSameAsShipping ? null : (billingPostalCode || null),
+        billingCountry: billingSameAsShipping ? null : (billingCountry || 'Pakistan'),
+        taxAmount: taxRes.amount.toFixed(2),
+        taxDetails: taxRes.breakdown,
+        preferredCommunication: preferredCommunication || null,
+        codReceiptId: orderRef,
       });
 
       const order = await storage.createOrder(validatedOrder);
+      log(`Order persist: id=${order.id} total=${validatedOrder.total}`);
 
-      const orderItemsPromises = items.map((item: any) => {
-        const validatedItem = insertOrderItemSchema.parse({
-          ...item,
-          orderId: order.id,
-        });
-        return storage.createOrderItem(validatedItem);
-      });
+      await Promise.all(
+        validatedItems.map((vi) => storage.createOrderItem({ ...vi, orderId: order.id }))
+      );
 
-      await Promise.all(orderItemsPromises);
-      res.status(201).json(order);
+      for (const vi of validatedItems) {
+        const p = await storage.getProduct(vi.productId);
+        if (p) {
+          const newStock = Math.max(0, (p.stock || 0) - vi.quantity);
+          await storage.updateProduct(p.id, { stock: newStock });
+        }
+      }
+
+      if (lowerMethod === 'cod') {
+        try {
+          let adminId: string | undefined;
+          if (process.env.ADMIN_EMAIL) {
+            const admin = await storage.getUserByEmail(process.env.ADMIN_EMAIL);
+            adminId = admin?.id;
+          }
+          if (!adminId) {
+            const allUsers = await storage.getAllUsers();
+            adminId = allUsers.find(u => u.role === 'admin')?.id;
+          }
+          if (adminId) {
+            await storage.createMessage({
+              senderId: adminId,
+              receiverId: userId,
+              orderId: order.id,
+              message: `Your COD order ${orderRef} has been confirmed. Estimated delivery: ${estimatedDelivery}. Please prepare PKR ${totalComputed.toFixed(2)} for payment on delivery.`,
+            } as any);
+          }
+        } catch {}
+      }
+
+      try {
+        if (saveInfo === true) {
+          const current = await storage.getUser(userId);
+          if (current) {
+            await storage.upsertUser({
+              id: current.id,
+              email: current.email,
+              firstName: current.firstName,
+              lastName: current.lastName,
+              phone: phoneNumber || (current as any).phone || null,
+              defaultShippingAddress: shippingAddress,
+              shippingPrefs: {
+                recipientName,
+                recipientEmail,
+                shippingStreet,
+                shippingApartment,
+                shippingCity,
+                shippingProvince,
+                shippingPostalCode,
+                shippingCountry,
+              },
+              notificationPrefs: (current as any).notificationPrefs || null,
+              role: current.role,
+            } as any);
+          }
+        }
+      } catch {}
+
+      res.status(201).json({ ...order, reference: orderRef, estimatedDelivery });
     } catch (error: any) {
       console.error("Error creating order:", error);
       if (error.name === 'ZodError') {
@@ -978,7 +2342,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/orders/:id', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.userId;
       const order = await storage.getOrder(req.params.id);
       
       if (!order) {
@@ -998,16 +2362,207 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const items = await storage.getOrderItems(order.id);
-      res.json({ ...order, items });
+      const buyer = await storage.getUser(order.buyerId);
+      res.json({ ...order, items, buyer: buyer ? sanitizeUser(buyer) : null });
     } catch (error) {
       console.error("Error fetching order:", error);
       res.status(500).json({ message: "Failed to fetch order" });
     }
   });
 
+  app.get('/api/orders/:id/receipt', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const order = await storage.getOrder(req.params.id);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+
+      const user = await storage.getUser(userId);
+      if (order.buyerId !== userId && user?.role !== 'admin') {
+        const orderItems = await storage.getOrderItems(order.id);
+        const vendorStores = await storage.getStoresByVendor(userId);
+        const vendorStoreIds = vendorStores.map(s => s.id);
+        const hasVendorItem = orderItems.some(item => vendorStoreIds.includes(item.storeId));
+        if (!hasVendorItem) {
+          return res.status(403).json({ message: 'Not authorized' });
+        }
+      }
+
+      const itemsWithProducts = await storage.getOrderItemsWithProductsForOrders([order.id]);
+      const list = itemsWithProducts[order.id] || [];
+      const storeIds = Array.from(new Set(list.map(i => i.storeId)));
+      const stores = await Promise.all(storeIds.map(id => storage.getStore(id)));
+      const storeMap = new Map(stores.filter(Boolean).map(s => [s!.id, s!.name]));
+
+      const subtotal = list.reduce((s: number, it: any) => s + parseFloat(String(it.price)) * Number(it.quantity), 0);
+      const shippingCost = parseFloat(String((order as any).shippingCost ?? 0));
+      const taxAmount = parseFloat(String((order as any).taxAmount ?? 0));
+      const total = parseFloat(String(order.total));
+
+      const buyer = await storage.getUser(order.buyerId);
+
+      const receipt = {
+        orderId: order.id,
+        receiptNumber: (order as any).codReceiptId || (order as any).paymentReference || null,
+        createdAt: order.createdAt as any,
+        paymentMethod: (order as any).paymentMethod || null,
+        shippingMethod: (order as any).shippingMethod || null,
+        estimatedDelivery: (order as any).processingEstimate || (((order as any).paymentMethod || '').toLowerCase() === 'cod' ? '3-7 business days' : null),
+        buyer: buyer ? { firstName: (buyer as any).firstName || null, lastName: (buyer as any).lastName || null, email: buyer.email || null, phone: (buyer as any).phone || null } : null,
+        shippingAddress: (order as any).shippingAddress || null,
+        items: list.map((it: any) => ({
+          productTitle: it.product?.title || 'Product',
+          productImage: it.product?.images?.[0] || null,
+          storeName: storeMap.get(it.storeId) || it.storeId,
+          quantity: Number(it.quantity),
+          unitPrice: String(it.price),
+          lineTotal: (parseFloat(String(it.price)) * Number(it.quantity)).toFixed(2),
+        })),
+        subtotal: subtotal.toFixed(2),
+        shippingCost: shippingCost.toFixed(2),
+        taxAmount: taxAmount.toFixed(2),
+        total: total.toFixed(2),
+      };
+
+      res.json(receipt);
+    } catch (error) {
+      console.error('Receipt build error:', error);
+      res.status(500).json({ message: 'Failed to build receipt' });
+    }
+  });
+
+  app.get('/api/orders/:id/receipt.html', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const order = await storage.getOrder(req.params.id);
+      if (!order) {
+        return res.status(404).send('Not found');
+      }
+
+      const user = await storage.getUser(userId);
+      if (order.buyerId !== userId && user?.role !== 'admin') {
+        const orderItems = await storage.getOrderItems(order.id);
+        const vendorStores = await storage.getStoresByVendor(userId);
+        const vendorStoreIds = vendorStores.map(s => s.id);
+        const hasVendorItem = orderItems.some(item => vendorStoreIds.includes(item.storeId));
+        if (!hasVendorItem) {
+          return res.status(403).send('Forbidden');
+        }
+      }
+
+      const itemsWithProducts = await storage.getOrderItemsWithProductsForOrders([order.id]);
+      const list = itemsWithProducts[order.id] || [];
+      const storeIds = Array.from(new Set(list.map(i => i.storeId)));
+      const stores = await Promise.all(storeIds.map(id => storage.getStore(id)));
+      const storeMap = new Map(stores.filter(Boolean).map(s => [s!.id, s!.name]));
+
+      const dt = order.createdAt ? new Date(order.createdAt as any) : new Date();
+      const dateStr = dt.toLocaleString('en-US', { year: 'numeric', month: 'short', day: '2-digit', hour: 'numeric', minute: '2-digit' });
+      const payment = ((order as any).paymentMethod || 'cod').toString();
+      const subtotal = list.reduce((s: number, it: any) => s + parseFloat(String(it.price)) * Number(it.quantity), 0);
+      const shipping = parseFloat(String((order as any).shippingCost ?? 0));
+      const taxes = parseFloat(String((order as any).taxAmount ?? 0));
+      const total = subtotal + shipping + taxes;
+      const receiptId = (order as any).codReceiptId || (order as any).paymentReference || '—';
+      const est = (order as any).processingEstimate || (payment.toLowerCase() === 'cod' ? '3-7 business days' : '—');
+      const buyer = await storage.getUser(order.buyerId);
+      const buyerName = buyer ? `${(buyer as any).firstName || ''} ${(buyer as any).lastName || ''}`.trim() : '';
+      const buyerEmail = buyer?.email || '';
+      const buyerPhone = (order as any).shippingPhone || (buyer as any)?.phone || '';
+
+      const itemRows = list.map((it: any) => {
+        const img = it.product?.images?.[0] || '';
+        const title = it.product?.title || 'Product';
+        const storeName = storeMap.get(it.storeId) || it.storeId;
+        const lineTotal = parseFloat(String(it.price)) * Number(it.quantity);
+        const imgTag = img ? `<img src="${img}" alt="${title}" style="width:48px;height:48px;object-fit:cover;border-radius:6px"/>` : '';
+        return `
+      <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #eee">
+        ${imgTag}
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600">${title}</div>
+          <div style="font-size:12px;color:#6b7280">Sold by: ${storeName}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-weight:600">PKR ${lineTotal.toLocaleString()}</div>
+          <div style="font-size:12px;color:#6b7280">Qty: ${Number(it.quantity)}</div>
+        </div>
+      </div>
+    `;
+      }).join('');
+
+      const styles = `
+    body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;background:#f7f7f7;margin:24px}
+    .wrap{max-width:900px;margin:0 auto;background:#fff;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.06)}
+    .inner{padding:24px}
+    .title{display:flex;align-items:center;gap:8px;font-weight:700;font-size:24px}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:8px}
+    .label{font-size:12px;color:#6b7280}
+    .value{font-weight:600}
+    .muted{color:#6b7280;font-size:14px;margin-top:12px}
+    .section{margin-top:16px;padding-top:16px;border-top:1px solid #eee}
+    .grid-two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+    .totals{display:grid;gap:8px;margin-top:12px}
+    .row{display:flex;justify-content:space-between}
+    .row .label{font-size:14px}
+    .row .value{font-weight:600}
+    .primary{background:#f97316;color:#fff;border:none;border-radius:8px;padding:10px 14px}
+  `;
+
+      const html = `<!doctype html><meta charset="utf-8"><title>Receipt ${order.id}</title>
+  <style>${styles}</style>
+  <div class="wrap"><div class="inner">
+    <div class="title"><span style="color:#16a34a">✔</span> Order Confirmed</div>
+    <div class="grid">
+      <div><div class="label">Order Number</div><div class="value">${order.id.slice(0, 8)}</div></div>
+      <div><div class="label">Receipt Number</div><div class="value">${receiptId}</div></div>
+      <div><div class="label">Date and Time</div><div class="value">${dateStr}</div></div>
+      <div><div class="label">Payment</div><div class="value">${payment}</div></div>
+      <div><div class="label">Shipping Method</div><div class="value">${(order as any).shippingMethod || 'standard'}</div></div>
+      <div><div class="label">Estimated Delivery</div><div class="value">${est}</div></div>
+    </div>
+    <div class="muted">A confirmation has been sent. Thank you for your purchase!</div>
+    <div class="section">
+      <div class="grid-two">
+        <div>
+          <div style="font-weight:600;margin-bottom:6px">Buyer</div>
+          <div class="label">Name</div>
+          <div class="value">${buyerName || '—'}</div>
+          <div class="label" style="margin-top:6px">Email</div>
+          <div class="value">${buyerEmail || '—'}</div>
+          <div class="label" style="margin-top:6px">Phone</div>
+          <div class="value">${buyerPhone || '—'}</div>
+        </div>
+        <div>
+          <div style="font-weight:600;margin-bottom:6px">Shipping Address</div>
+          <div class="value">${(order as any).shippingAddress || '—'}</div>
+        </div>
+      </div>
+    </div>
+    <div class="section">
+      <div style="font-weight:600">Order Summary</div>
+      ${itemRows}
+      <div class="totals">
+        <div class="row"><div class="label">Subtotal</div><div class="value">PKR ${subtotal.toLocaleString()}</div></div>
+        <div class="row"><div class="label">Shipping</div><div class="value">PKR ${shipping.toLocaleString()}</div></div>
+        <div class="row"><div class="label">Taxes</div><div class="value">PKR ${taxes.toLocaleString()}</div></div>
+        <div class="row" style="border-top:1px solid #eee;padding-top:8px"><div class="label">Total</div><div class="value">PKR ${total.toLocaleString()}</div></div>
+      </div>
+    </div>
+  </div></div>`;
+
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(html);
+    } catch (error) {
+      console.error('Receipt HTML error:', error);
+      res.status(500).send('Failed to build receipt');
+    }
+  });
+
   app.get('/api/buyer/orders', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.userId;
       const orders = await storage.getOrdersByBuyer(userId);
       res.json(orders);
     } catch (error) {
@@ -1018,8 +2573,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put('/api/orders/:id/status', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
-      const { status } = req.body;
+      const userId = req.userId;
+      const { status, processingEstimate, trackingNumber, deliveryConfirmed, courierService } = req.body;
       
       if (!status) {
         return res.status(400).json({ message: "Status is required" });
@@ -1042,11 +2597,278 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      const current = (order.status || '').toLowerCase();
+      const next = String(status).toLowerCase();
+      const validTransitions: Record<string, string[]> = {
+        pending: ['processing'],
+        processing: ['shipped'],
+        shipped: ['delivered'],
+      };
+      if (!validTransitions[current] || !validTransitions[current].includes(next)) {
+        return res.status(400).json({ message: `Invalid state change from ${current} to ${next}` });
+      }
+
+      const metaUpdates: any = {};
+      if (next === 'processing' && processingEstimate) metaUpdates.processingEstimate = processingEstimate;
+      if (next === 'shipped') {
+        if (!trackingNumber && !order.trackingNumber) {
+          return res.status(400).json({ message: 'Tracking number is required to mark as shipped' });
+        }
+        if (!courierService && !(order as any).courierService) {
+          return res.status(400).json({ message: 'Courier service is required to mark as shipped' });
+        }
+        if (trackingNumber) metaUpdates.trackingNumber = trackingNumber;
+        if (courierService) metaUpdates.courierService = courierService;
+      }
+      if (next === 'delivered') {
+        const hasTracking = !!(trackingNumber || order.trackingNumber);
+        const hasCourier = !!(courierService || (order as any).courierService);
+        if (!hasTracking || !hasCourier) {
+          return res.status(400).json({ message: 'Shipment tracking must be verified before delivery' });
+        }
+        const method = (order.paymentMethod || '').toLowerCase();
+        const isCod = method === 'cod' || method === 'cash';
+        const paymentCleared = isCod ? (order.codPaymentStatus === 'collected') : ((order as any).paymentVerificationStatus === 'cleared');
+        if (!paymentCleared) {
+          return res.status(400).json({ message: 'Payment not verified. Delivery disabled.' });
+        }
+        if (deliveryConfirmed) metaUpdates.deliveryConfirmedAt = new Date();
+      }
+
       const updatedOrder = await storage.updateOrderStatus(req.params.id, status);
-      res.json(updatedOrder);
+      if (!updatedOrder) return res.status(404).json({ message: "Order not found" });
+      if (Object.keys(metaUpdates).length > 0) {
+        await storage.updateOrderMeta(req.params.id, metaUpdates);
+      }
+
+      try {
+        const buyer = await storage.getUser(order.buyerId);
+        if (buyer) {
+          await storage.createMessage({
+            senderId: userId,
+            receiverId: buyer.id,
+            orderId: order.id,
+            message: `Order status updated to ${status}${courierService ? ` via ${courierService}` : ''}${trackingNumber ? `, tracking: ${trackingNumber}` : ''}${processingEstimate ? `, estimate: ${processingEstimate}` : ''}.`,
+          } as any);
+        }
+      } catch {}
+
+      const finalOrder = await storage.getOrder(req.params.id);
+      res.json(finalOrder);
     } catch (error) {
       console.error("Error updating order status:", error);
       res.status(500).json({ message: "Failed to update order status" });
+    }
+  });
+
+  app.post('/api/orders/:id/cancel', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const { reason } = req.body as { reason?: string };
+      const order = await storage.getOrder(req.params.id);
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+      const user = await storage.getUser(userId);
+      if (order.buyerId !== userId && user?.role !== 'admin') {
+        const orderItems = await storage.getOrderItems(order.id);
+        const vendorStores = await storage.getStoresByVendor(userId);
+        const vendorStoreIds = vendorStores.map(s => s.id);
+        const hasVendorItem = orderItems.some(item => vendorStoreIds.includes(item.storeId));
+        if (!hasVendorItem) {
+          return res.status(403).json({ message: "Not authorized to cancel this order" });
+        }
+      }
+      if (!reason || !reason.trim()) {
+        console.log(`[Cancel Order] Missing reason. Body:`, req.body);
+        return res.status(400).json({ message: 'Cancellation reason is required' });
+      }
+      const created = new Date(order.createdAt as any).getTime();
+      const now = Date.now();
+      // For debugging purposes, let's log the times
+      console.log(`[Cancel Order] Order: ${order.id}, Created: ${new Date(created).toISOString()}, Now: ${new Date(now).toISOString()}, Diff: ${now - created}`);
+      
+      // Extend cancellation window to 7 days
+      const withinWindow = now - created < 7 * 24 * 60 * 60 * 1000;
+      if (!withinWindow) {
+        console.log(`[Cancel Order] Window expired for order ${order.id}`);
+        return res.status(400).json({ message: "Cancellation window has expired (7 days limit)" });
+      }
+      const updated = await storage.updateOrderStatus(order.id, 'cancelled');
+      const method = (order.paymentMethod || '').toLowerCase();
+      const meta: any = { cancellationReason: reason, cancelledBy: user?.role === 'admin' ? 'admin' : (order.buyerId === userId ? 'buyer' : 'vendor'), cancelledAt: new Date() as any };
+      if (method === 'cod' || method === 'cash') {
+        meta.codPaymentStatus = 'collected';
+        meta.codCollectedAt = new Date() as any;
+        meta.codReceiptId = meta.codReceiptId || 'CANCELLED';
+      } else if (method === 'jazzcash' || method === 'easypaisa') {
+        meta.paymentVerificationStatus = 'cleared';
+        meta.paymentVerifiedAt = new Date() as any;
+        meta.paymentReference = 'CANCELLED';
+      }
+      await storage.updateOrderMeta(order.id, meta);
+      const items = await storage.getOrderItems(order.id);
+      for (const it of items) {
+        const p = await storage.getProduct(it.productId);
+        if (p) await storage.updateProduct(p.id, { stock: (p.stock || 0) + it.quantity });
+      }
+      try {
+        const buyer = await storage.getUser(order.buyerId);
+        if (buyer) {
+          await storage.createMessage({
+            senderId: userId,
+            receiverId: buyer.id,
+            orderId: order.id,
+            message: `Your order has been cancelled: ${reason}.`,
+          } as any);
+        }
+      } catch {}
+      res.json(updated);
+    } catch (error) {
+      console.error('Cancel order error:', error);
+      res.status(500).json({ message: 'Failed to cancel order' });
+    }
+  });
+
+  app.post('/api/orders/:id/cod/collect', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const order = await storage.getOrder(req.params.id);
+      if (!order) return res.status(404).json({ message: 'Order not found' });
+      if ((order.paymentMethod || '').toLowerCase() !== 'cod') return res.status(400).json({ message: 'Not a COD order' });
+
+      const user = await storage.getUser(userId);
+      if (user?.role !== 'admin') {
+        const orderItems = await storage.getOrderItems(order.id);
+        const vendorStores = await storage.getStoresByVendor(userId);
+        const vendorStoreIds = vendorStores.map(s => s.id);
+        const hasVendorItem = orderItems.some(item => vendorStoreIds.includes(item.storeId));
+        if (!hasVendorItem) {
+          return res.status(403).json({ message: 'Not authorized to record payment for this order' });
+        }
+      }
+
+      const receiptId = `RCPT-${new Date().toISOString().replace(/[-:T\.Z]/g, '').slice(0, 12)}`;
+      const updated = await storage.updateOrderMeta(order.id, {
+        codPaymentStatus: 'collected',
+        codCollectedAt: new Date() as any,
+        codReceiptId: receiptId,
+      });
+
+      try {
+        const buyer = await storage.getUser(order.buyerId);
+        if (buyer) {
+          await storage.createMessage({
+            senderId: userId,
+            receiverId: buyer.id,
+            orderId: order.id,
+            message: `Payment collected for order. Receipt: ${receiptId}.`,
+          } as any);
+        }
+      } catch {}
+
+      res.json(updated);
+    } catch (error) {
+      console.error('COD collect error:', error);
+      res.status(500).json({ message: 'Failed to record COD payment' });
+    }
+  });
+
+  app.post('/api/orders/:id/reactivate', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const { reason } = req.body as { reason?: string };
+      const order = await storage.getOrder(req.params.id);
+      if (!order) return res.status(404).json({ message: 'Order not found' });
+      if (order.status !== 'cancelled') return res.status(400).json({ message: 'Only cancelled orders can be re-activated' });
+
+      const user = await storage.getUser(userId);
+      if (user?.role !== 'admin') {
+        const orderItems = await storage.getOrderItems(order.id);
+        const vendorStores = await storage.getStoresByVendor(userId);
+        const vendorStoreIds = vendorStores.map(s => s.id);
+        const hasVendorItem = orderItems.some(item => vendorStoreIds.includes(item.storeId));
+        if (!hasVendorItem) {
+          return res.status(403).json({ message: 'Not authorized to reactivate this order' });
+        }
+      }
+
+      const cancelledAt = (order as any).cancelledAt ? new Date((order as any).cancelledAt as any).getTime() : null;
+      if (cancelledAt && Date.now() - cancelledAt > 7 * 24 * 60 * 60 * 1000) {
+        return res.status(400).json({ message: 'Reactivation window expired' });
+      }
+      const items = await storage.getOrderItems(order.id);
+      for (const it of items) {
+        const p = await storage.getProduct(it.productId);
+        if (!p || (p.stock || 0) < it.quantity) {
+          return res.status(400).json({ message: 'Insufficient stock to reactivate' });
+        }
+      }
+
+      const updated = await storage.updateOrderStatus(order.id, 'pending');
+      await storage.updateOrderMeta(order.id, { reactivatedAt: new Date() as any, reactivatedBy: user?.role === 'admin' ? 'admin' : 'vendor' });
+      try {
+        const buyer = await storage.getUser(order.buyerId);
+        if (buyer) {
+          await storage.createMessage({
+            senderId: userId,
+            receiverId: buyer.id,
+            orderId: order.id,
+            message: `Order re-activated${reason ? `: ${reason}` : ''}.`,
+          } as any);
+        }
+      } catch {}
+      res.json(updated);
+    } catch (error) {
+      console.error('Reactivate order error:', error);
+      res.status(500).json({ message: 'Failed to reactivate order' });
+    }
+  });
+
+  app.post('/api/orders/:id/payment/verify', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const { method, reference } = req.body as { method: string; reference?: string };
+      const order = await storage.getOrder(req.params.id);
+      if (!order) return res.status(404).json({ message: 'Order not found' });
+
+      const user = await storage.getUser(userId);
+      if (user?.role !== 'admin') {
+        const orderItems = await storage.getOrderItems(order.id);
+        const vendorStores = await storage.getStoresByVendor(userId);
+        const vendorStoreIds = vendorStores.map(s => s.id);
+        const hasVendorItem = orderItems.some(item => vendorStoreIds.includes(item.storeId));
+        if (!hasVendorItem) {
+          return res.status(403).json({ message: 'Not authorized to verify payment for this order' });
+        }
+      }
+
+      const m = (method || '').toLowerCase();
+      if (!['cash', 'cod', 'jazzcash', 'easypaisa'].includes(m)) {
+        return res.status(400).json({ message: 'Invalid payment method' });
+      }
+      const updates: any = {
+        paymentVerificationStatus: 'cleared',
+        paymentVerifiedAt: new Date() as any,
+        paymentReference: reference || null,
+      };
+      if (!order.paymentMethod) updates.paymentMethod = m;
+      const updated = await storage.updateOrderMeta(order.id, updates);
+      try {
+        const buyer = await storage.getUser(order.buyerId);
+        if (buyer) {
+          await storage.createMessage({
+            senderId: userId,
+            receiverId: buyer.id,
+            orderId: order.id,
+            message: `Payment verified (${m})${reference ? `, ref: ${reference}` : ''}.`,
+          } as any);
+        }
+      } catch {}
+      res.json(updated);
+    } catch (error) {
+      console.error('Verify payment error:', error);
+      res.status(500).json({ message: 'Failed to verify payment' });
     }
   });
 
@@ -1065,6 +2887,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const orderIds = uniqueOrders.map(o => o.id).filter(Boolean);
       const itemsByOrderId = await storage.getOrderItemsWithProductsForOrders(orderIds);
 
+      // Fetch buyers info
+      const buyerIds = Array.from(new Set(uniqueOrders.map(o => o.buyerId)));
+      const buyers = await Promise.all(buyerIds.map(id => storage.getUser(id)));
+      const buyerMap = new Map(buyers.filter(Boolean).map(b => [b!.id, b!]));
+
       // Attach items to their respective orders and serialize decimal fields
       const ordersWithItems = uniqueOrders.map(order => ({
         ...order,
@@ -1073,6 +2900,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ...item,
           product: item.product ? serializeProduct(item.product) : null,
         })),
+        buyer: buyerMap.get(order.buyerId)
       }));
 
       res.json(ordersWithItems);
@@ -1101,12 +2929,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       const totalProducts = products.flat().length;
 
+      const allPromoProducts = await Promise.all(storeIds.map(id => storage.getPromotionProductsByStoreWithPromotions(id)));
+      const promoProductsFlat = allPromoProducts.flat();
+      const now = Date.now();
+      const activePromoProducts = promoProductsFlat.filter(pp => {
+        const p = pp.promotion;
+        const startOk = !p.startAt || new Date(p.startAt).getTime() <= now;
+        const endOk = !p.endAt || new Date(p.endAt).getTime() >= now;
+        return p.status === 'active' && startOk && endOk;
+      });
+      const typeBreakdown = {
+        percentage: activePromoProducts.filter(x => x.promotion.type === 'percentage').length,
+        fixed: activePromoProducts.filter(x => x.promotion.type === 'fixed').length,
+        'buy-one-get-one': activePromoProducts.filter(x => x.promotion.type === 'buy-one-get-one').length,
+      };
+
       res.json({
         totalRevenue: totalRevenue.toFixed(2), // Serialize as string with 2 decimal places
         totalEarnings: totalEarnings.toFixed(2), // Serialize as string with 2 decimal places
         totalOrders,
         totalProducts,
         totalStores: stores.length,
+        promotionProductCount: promoProductsFlat.length,
+        promotionActiveProductCount: activePromoProducts.length,
+        promotionTypeBreakdown: typeBreakdown,
       });
     } catch (error) {
       console.error("Error fetching vendor analytics:", error);
@@ -1145,19 +2991,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put('/api/admin/stores/:id/status', isAuthenticated, isAdmin, async (req: any, res) => {
     try {
-      const { status } = req.body;
+      const { status, reason } = req.body || {};
       if (!status) {
         return res.status(400).json({ message: "Status is required" });
       }
 
-      const updatedStore = await storage.updateStoreStatus(req.params.id, status);
+      const storeId = req.params.id;
+      const before = await storage.getStore(storeId);
+      const updatedStore = await storage.updateStoreStatus(storeId, status);
       if (!updatedStore) {
         return res.status(404).json({ message: "Store not found" });
       }
+
+      try {
+        await db.insert(configAudits).values({
+          entityType: 'store_status',
+          entityId: storeId,
+          action: 'update',
+          changes: { previous: before?.status, status, reason: reason || null } as any,
+          changedBy: req.userId,
+        } as any);
+      } catch {}
+
+      try {
+        const vendorUser = await storage.getUser(updatedStore.vendorId);
+        if (vendorUser) {
+          const msgLines = [
+            `Your store "${updatedStore.name}" status has been updated to ${status}.`,
+            reason ? `Reason: ${reason}` : '',
+          ].filter(Boolean);
+          await storage.createMessage({
+            senderId: req.userId,
+            receiverId: vendorUser.id,
+            orderId: undefined as any,
+            message: msgLines.join(' '),
+          } as any);
+        }
+      } catch {}
+
       res.json(updatedStore);
     } catch (error) {
       console.error("Error updating store status:", error);
       res.status(500).json({ message: "Failed to update store status" });
+    }
+  });
+
+  app.get('/api/admin/stores/:id/products', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const storeId = req.params.id;
+      const list = await storage.getProductsByStore(storeId);
+      res.json(list.map(serializeProduct));
+    } catch (error) {
+      console.error('Error fetching store products:', error);
+      res.status(500).json({ message: 'Failed to fetch products for store' });
+    }
+  });
+
+  app.get('/api/admin/stores/:id/activities', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const storeId = req.params.id;
+      const orders = await storage.getOrdersByStore(storeId);
+      const receivedOrders = orders.length;
+      const fulfilledOrdersList = orders.filter((o: any) => ['completed', 'delivered'].includes(String(o.status || '').toLowerCase()));
+      const fulfilledOrders = fulfilledOrdersList.length;
+      const canceledOrders = orders.filter((o: any) => String(o.status || '').toLowerCase() === 'cancelled').length;
+      const itemsLists = await Promise.all(fulfilledOrdersList.map((o: any) => storage.getOrderItems(o.id)));
+      const revenueNum = itemsLists
+        .flat()
+        .filter((it: any) => String(it.storeId) === String(storeId))
+        .reduce((sum: number, it: any) => sum + (Number(it.price || 0) * Number(it.quantity || 1)), 0);
+      const revenue = revenueNum.toFixed(2);
+      const discounts = (await storage.getPromotionsByStore(storeId)).length;
+      res.json({ receivedOrders, fulfilledOrders, canceledOrders, revenue, discounts });
+    } catch (error) {
+      console.error('Error fetching store activities:', error);
+      res.status(500).json({ message: 'Failed to fetch store activities' });
     }
   });
 
@@ -1174,6 +3082,359 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching products:", error);
       res.status(500).json({ message: "Failed to fetch products" });
+    }
+  });
+
+  app.get('/api/admin/verification/docs', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const storeId = req.query.storeId as string;
+      if (!storeId) return res.status(400).json({ message: 'storeId required' });
+      const dir = path.join(process.cwd(), 'uploads', 'verification', storeId);
+      const exists = await fs
+        .access(dir)
+        .then(() => true)
+        .catch(() => false);
+      if (!exists) return res.json([]);
+      const files = await fs.readdir(dir);
+      const items = files.map((name: string) => ({ name, url: `/uploads/verification/${storeId}/${name}` }));
+      res.json(items);
+    } catch (error) {
+      console.error('Admin docs list error:', error);
+      res.status(500).json({ message: 'Failed to list docs' });
+    }
+  });
+
+  app.get('/api/admin/analytics', isAuthenticated, isAdmin, async (_req, res) => {
+    try {
+      const products = await storage.getAllProducts();
+      const stores = await storage.getAllStores();
+      const users = await storage.getAllUsers();
+      const orders = await storage.getAllOrders();
+
+      const deliveredRevenue = orders
+        .filter((o: any) => (o.status || '').toLowerCase() === 'delivered')
+        .reduce((sum, o) => sum + (Number((o as any).total) || 0), 0);
+
+      const receivedOrdersValue = orders
+        .filter((o: any) => ['pending', 'processing', 'shipped'].includes((o.status || '').toLowerCase()))
+        .reduce((sum, o) => sum + (Number((o as any).total) || 0), 0);
+
+      const totalRevenue = deliveredRevenue;
+      const pendingStores = stores.filter(s => s.status === 'pending').length;
+      const pendingProducts = products.products.filter(p => p.status === 'pending').length;
+      const reviewAgg = await storage.getPlatformReviewAnalytics();
+
+      const codOrders = orders.filter((o: any) => (o.paymentMethod || '').toLowerCase() === 'cod').length;
+      const codDelivered = orders.filter((o: any) => (o.paymentMethod || '').toLowerCase() === 'cod' && o.status === 'delivered').length;
+
+      const storesByDistrict: { [key: string]: number } = {};
+      stores.forEach((store: any) => {
+        if (store.district) {
+          storesByDistrict[store.district] = (storesByDistrict[store.district] || 0) + 1;
+        }
+      });
+
+      const giBrandCounts: { [key: string]: number } = {};
+      products.products.forEach((product: any) => {
+        if (product.giBrand) {
+          giBrandCounts[product.giBrand] = (giBrandCounts[product.giBrand] || 0) + 1;
+        }
+      });
+      const topGIBrands = Object.entries(giBrandCounts)
+        .map(([brand, count]) => ({ brand, count }))
+        .sort((a, b) => b.count - a.count);
+
+      const analytics = {
+        totalProducts: products.total,
+        totalStores: stores.length,
+        totalUsers: users.length,
+        totalOrders: orders.length,
+        totalRevenue,
+        receivedOrdersValue,
+        pendingStores,
+        pendingProducts,
+        reviewsTotal: reviewAgg.total,
+        reviewsAverage: reviewAgg.average,
+        storesByDistrict,
+        topGIBrands,
+        codOrders,
+        codDelivered,
+      };
+      res.json(analytics);
+    } catch (error) {
+      console.error('Analytics error:', error);
+      res.status(500).json({ message: 'Failed to fetch analytics' });
+    }
+  });
+
+  app.get('/api/admin/platform/settings', isAuthenticated, isAdmin, async (_req: any, res) => {
+    try {
+      await ensureTaxShipSchema();
+      const rows = await db.select().from(platformSettings);
+      const current = rows[0] || { id: 'default', taxEnabled: true, shippingEnabled: true } as any;
+      res.json(current);
+    } catch (error) {
+      console.error('Admin settings fetch error:', error);
+      res.status(500).json({ message: 'Failed to fetch settings' });
+    }
+  });
+
+  app.put('/api/admin/platform/settings', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      await ensureTaxShipSchema();
+      const { taxEnabled, shippingEnabled } = req.body || {};
+      const updates: any = { updatedAt: new Date() as any };
+      if (typeof taxEnabled === 'boolean') updates.taxEnabled = taxEnabled;
+      if (typeof shippingEnabled === 'boolean') updates.shippingEnabled = shippingEnabled;
+      const [updated] = await db
+        .update(platformSettings)
+        .set(updates)
+        .where(eq(platformSettings.id, 'default'))
+        .returning();
+      try {
+        await db.insert(configAudits).values({
+          entityType: 'platform_settings',
+          entityId: 'default',
+          action: 'update',
+          changes: updates,
+          changedBy: req.userId,
+        } as any);
+      } catch {}
+      res.json(updated);
+    } catch (error) {
+      console.error('Admin settings update error:', error);
+      res.status(500).json({ message: 'Failed to update settings' });
+    }
+  });
+
+  app.get('/api/admin/tax-rules', isAuthenticated, isAdmin, async (_req, res) => {
+    try {
+      await ensureTaxShipSchema();
+      const rules = await db.select().from(taxRules);
+      res.json(rules);
+    } catch (error) {
+      console.error('Admin list tax rules error:', error);
+      res.status(500).json({ message: 'Failed to list tax rules' });
+    }
+  });
+
+  app.post('/api/admin/tax-rules', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      await ensureTaxShipSchema();
+      const payload = req.body || {};
+      const [created] = await db.insert(taxRules).values({
+        enabled: payload.enabled !== false,
+        category: payload.category || null,
+        province: payload.province || null,
+        rate: String(payload.rate ?? '0'),
+        exempt: !!payload.exempt,
+        priority: Number(payload.priority ?? 0),
+        createdBy: req.userId,
+      } as any).returning();
+      try {
+        await db.insert(configAudits).values({
+          entityType: 'tax_rule',
+          entityId: created.id as any,
+          action: 'create',
+          changes: payload,
+          changedBy: req.userId,
+        } as any);
+      } catch {}
+      res.status(201).json(created);
+    } catch (error) {
+      console.error('Admin create tax rule error:', error);
+      res.status(500).json({ message: 'Failed to create tax rule' });
+    }
+  });
+
+  app.put('/api/admin/tax-rules/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      await ensureTaxShipSchema();
+      const id = req.params.id;
+      const payload = req.body || {};
+      const updates: any = {};
+      if (payload.enabled != null) updates.enabled = !!payload.enabled;
+      if (payload.category != null) updates.category = String(payload.category);
+      if (payload.province != null) updates.province = String(payload.province);
+      if (payload.rate != null) updates.rate = String(payload.rate);
+      if (payload.exempt != null) updates.exempt = !!payload.exempt;
+      if (payload.priority != null) updates.priority = Number(payload.priority);
+      const [updated] = await db.update(taxRules).set(updates).where(eq(taxRules.id, id)).returning();
+      try {
+        await db.insert(configAudits).values({
+          entityType: 'tax_rule',
+          entityId: id,
+          action: 'update',
+          changes: updates,
+          changedBy: req.userId,
+        } as any);
+      } catch {}
+      res.json(updated);
+    } catch (error) {
+      console.error('Admin update tax rule error:', error);
+      res.status(500).json({ message: 'Failed to update tax rule' });
+    }
+  });
+
+  app.delete('/api/admin/tax-rules/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      await ensureTaxShipSchema();
+      const id = req.params.id;
+      await db.delete(taxRules).where(eq(taxRules.id, id));
+      try {
+        await db.insert(configAudits).values({
+          entityType: 'tax_rule',
+          entityId: id,
+          action: 'delete',
+          changes: null as any,
+          changedBy: req.userId,
+        } as any);
+      } catch {}
+      res.json({ deleted: id });
+    } catch (error) {
+      console.error('Admin delete tax rule error:', error);
+      res.status(500).json({ message: 'Failed to delete tax rule' });
+    }
+  });
+
+  app.get('/api/admin/shipping-rate-rules', isAuthenticated, isAdmin, async (_req, res) => {
+    try {
+      await ensureTaxShipSchema();
+      const rules = await db.select().from(shippingRateRules);
+      res.json(rules);
+    } catch (error) {
+      console.error('Admin list shipping rate rules error:', error);
+      res.status(500).json({ message: 'Failed to list shipping rate rules' });
+    }
+  });
+
+  app.post('/api/admin/shipping-rate-rules', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      await ensureTaxShipSchema();
+      const payload = req.body || {};
+      const [created] = await db.insert(shippingRateRules).values({
+        enabled: payload.enabled !== false,
+        carrier: String(payload.carrier ?? 'internal'),
+        method: String(payload.method ?? 'standard'),
+        zone: String(payload.zone ?? 'PK'),
+        minWeightKg: String(payload.minWeightKg ?? '0'),
+        maxWeightKg: String(payload.maxWeightKg ?? '999'),
+        baseRate: String(payload.baseRate ?? '0'),
+        perKgRate: String(payload.perKgRate ?? '0'),
+        dimensionalFactor: payload.dimensionalFactor != null ? String(payload.dimensionalFactor) : null,
+        surcharge: payload.surcharge != null ? String(payload.surcharge) : null,
+        priority: Number(payload.priority ?? 0),
+        createdBy: req.userId,
+      } as any).returning();
+      try {
+        await db.insert(configAudits).values({
+          entityType: 'shipping_rate_rule',
+          entityId: created.id as any,
+          action: 'create',
+          changes: payload,
+          changedBy: req.userId,
+        } as any);
+      } catch {}
+      res.status(201).json(created);
+    } catch (error) {
+      console.error('Admin create shipping rate rule error:', error);
+      res.status(500).json({ message: 'Failed to create shipping rate rule' });
+    }
+  });
+
+  app.put('/api/admin/shipping-rate-rules/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      await ensureTaxShipSchema();
+      const id = req.params.id;
+      const payload = req.body || {};
+      const updates: any = {};
+      if (payload.enabled != null) updates.enabled = !!payload.enabled;
+      if (payload.carrier != null) updates.carrier = String(payload.carrier);
+      if (payload.method != null) updates.method = String(payload.method);
+      if (payload.zone != null) updates.zone = String(payload.zone);
+      if (payload.minWeightKg != null) updates.minWeightKg = String(payload.minWeightKg);
+      if (payload.maxWeightKg != null) updates.maxWeightKg = String(payload.maxWeightKg);
+      if (payload.baseRate != null) updates.baseRate = String(payload.baseRate);
+      if (payload.perKgRate != null) updates.perKgRate = String(payload.perKgRate);
+      if (payload.dimensionalFactor != null) updates.dimensionalFactor = String(payload.dimensionalFactor);
+      if (payload.surcharge != null) updates.surcharge = String(payload.surcharge);
+      if (payload.priority != null) updates.priority = Number(payload.priority);
+      const [updated] = await db.update(shippingRateRules).set(updates).where(eq(shippingRateRules.id, id)).returning();
+      try {
+        await db.insert(configAudits).values({
+          entityType: 'shipping_rate_rule',
+          entityId: id,
+          action: 'update',
+          changes: updates,
+          changedBy: req.userId,
+        } as any);
+      } catch {}
+      res.json(updated);
+    } catch (error) {
+      console.error('Admin update shipping rate rule error:', error);
+      res.status(500).json({ message: 'Failed to update shipping rate rule' });
+    }
+  });
+
+  app.delete('/api/admin/shipping-rate-rules/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      await ensureTaxShipSchema();
+      const id = req.params.id;
+      await db.delete(shippingRateRules).where(eq(shippingRateRules.id, id));
+      try {
+        await db.insert(configAudits).values({
+          entityType: 'shipping_rate_rule',
+          entityId: id,
+          action: 'delete',
+          changes: null as any,
+          changedBy: req.userId,
+        } as any);
+      } catch {}
+      res.json({ deleted: id });
+    } catch (error) {
+      console.error('Admin delete shipping rate rule error:', error);
+      res.status(500).json({ message: 'Failed to delete shipping rate rule' });
+    }
+  });
+
+  app.get('/api/admin/reviews', isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const status = (req.query.status as string) || 'pending';
+      // Simple fetch of pending reviews
+      // Reuse storage.getReviewsByProduct across all products by fetching products first
+      const { products } = await storage.getAllProducts({ status: 'approved' });
+      const all: any[] = [];
+      for (const p of products) {
+        const list = await storage.getReviewsByProduct(p.id, 'newest');
+        all.push(...list);
+      }
+      const filtered = all.filter(r => r.status === status);
+      res.json(filtered);
+    } catch (error) {
+      console.error('Admin reviews fetch error:', error);
+      res.status(500).json({ message: 'Failed to fetch reviews' });
+    }
+  });
+
+  app.post('/api/admin/reviews/:id/approve', isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const id = req.params.id as string;
+      await db.execute(sql`UPDATE reviews SET status = 'approved' WHERE id = ${id}`);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Approve review error:', error);
+      res.status(500).json({ message: 'Failed to approve review' });
+    }
+  });
+
+  app.post('/api/admin/reviews/:id/reject', isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const id = req.params.id as string;
+      await db.execute(sql`UPDATE reviews SET status = 'rejected' WHERE id = ${id}`);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Reject review error:', error);
+      res.status(500).json({ message: 'Failed to reject review' });
     }
   });
 
@@ -1205,50 +3466,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/admin/analytics', isAuthenticated, isAdmin, async (req: any, res) => {
-    try {
-      const [stores, productsResult, orders, users] = await Promise.all([
-        storage.getAllStores(),
-        storage.getAllProducts({}),
-        storage.getAllOrders(),
-        storage.getAllUsers(),
-      ]);
-
-      const totalRevenue = orders.reduce((sum: number, order: any) => sum + Number(order.total), 0);
-      
-      const storesByDistrict: { [key: string]: number } = {};
-      stores.forEach((store: any) => {
-        if (store.district) {
-          storesByDistrict[store.district] = (storesByDistrict[store.district] || 0) + 1;
-        }
-      });
-
-      const giBrandCounts: { [key: string]: number } = {};
-      productsResult.products.forEach((product: any) => {
-        if (product.giBrand) {
-          giBrandCounts[product.giBrand] = (giBrandCounts[product.giBrand] || 0) + 1;
-        }
-      });
-      const topGIBrands = Object.entries(giBrandCounts)
-        .map(([brand, count]) => ({ brand, count }))
-        .sort((a, b) => b.count - a.count);
-
-      res.json({
-        totalUsers: users.length,
-        totalStores: stores.length,
-        totalProducts: productsResult.total,
-        totalOrders: orders.length,
-        totalRevenue,
-        pendingStores: stores.filter((s: any) => s.status === 'pending').length,
-        pendingProducts: productsResult.products.filter((p: any) => p.status === 'pending').length,
-        storesByDistrict,
-        topGIBrands,
-      });
-    } catch (error) {
-      console.error("Error fetching admin analytics:", error);
-      res.status(500).json({ message: "Failed to fetch analytics" });
-    }
-  });
 
   app.get('/api/users', isAuthenticated, isAdmin, async (req: any, res) => {
     try {
@@ -1279,10 +3496,135 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get('/api/admin/users/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.params.id);
+      if (!user) return res.status(404).json({ message: 'User not found' });
+      const safe = sanitizeUser(user);
+      const permissions = Array.from(new Set([
+        safe.role === 'admin' ? 'manage_users' : null,
+        safe.role === 'admin' ? 'manage_products' : null,
+        safe.role === 'admin' ? 'manage_orders' : null,
+        safe.role === 'vendor' ? 'manage_store' : null,
+        safe.role === 'vendor' ? 'manage_products' : null,
+        'view_orders',
+      ].filter(Boolean) as string[]));
+      res.json({
+        ...safe,
+        permissions,
+      });
+    } catch (error) {
+      console.error('Error fetching admin user:', error);
+      res.status(500).json({ message: 'Failed to fetch user' });
+    }
+  });
+
+  app.put('/api/admin/users/:id/active', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { isActive } = req.body || {};
+      if (typeof isActive !== 'boolean') {
+        return res.status(400).json({ message: 'isActive boolean required' });
+      }
+      const user = await storage.updateUserActiveStatus(req.params.id, !!isActive);
+      if (!user) return res.status(404).json({ message: 'User not found' });
+      try {
+        await db.insert(configAudits).values({
+          entityType: 'user',
+          entityId: req.params.id,
+          action: isActive ? 'activate' : 'deactivate',
+          changes: { isActive },
+          changedBy: req.userId,
+        } as any);
+      } catch {}
+      res.json(sanitizeUser(user));
+    } catch (error) {
+      console.error('Error updating user active:', error);
+      res.status(500).json({ message: 'Failed to update user status' });
+    }
+  });
+
+  app.post('/api/admin/users/:id/reset-password', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const target = await storage.getUser(req.params.id);
+      if (!target) return res.status(404).json({ message: 'User not found' });
+      const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+      const gen = (len: number) => Array.from({ length: len }, () => charset[Math.floor(Math.random() * charset.length)]).join('');
+      let temp = gen(12);
+      const ensure = (s: string) => {
+        if (!/[A-Z]/.test(s)) s = 'A' + s.slice(1);
+        if (!/[a-z]/.test(s)) s = s.slice(0, -1) + 'a';
+        if (!/[0-9]/.test(s)) s = s + '2';
+        return s;
+      };
+      temp = ensure(temp);
+      const hash = await hashPassword(temp);
+      await storage.updatePassword(target.id, hash);
+      try {
+        await db.insert(configAudits).values({
+          entityType: 'user',
+          entityId: target.id,
+          action: 'reset_password',
+          changes: { byAdmin: req.userId },
+          changedBy: req.userId,
+        } as any);
+      } catch {}
+      res.json({ tempPassword: temp });
+    } catch (error) {
+      console.error('Error resetting user password:', error);
+      res.status(500).json({ message: 'Failed to reset password' });
+    }
+  });
+
+  const resetVendorPasswordSchema = z.object({
+    storeId: z.string().optional(),
+    storeName: z.string().optional(),
+    newPassword: registerSchema.shape.password,
+  }).refine((data) => !!data.storeId || !!data.storeName, {
+    message: "Provide either storeId or storeName",
+    path: ["storeId"],
+  });
+
+  app.post('/api/admin/stores/reset-vendor-password', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const parsed = resetVendorPasswordSchema.parse(req.body);
+
+      let targetStore: any | undefined;
+      if (parsed.storeId) {
+        targetStore = await storage.getStore(parsed.storeId);
+      } else if (parsed.storeName) {
+        const allStores = await storage.getAllStores();
+        targetStore = allStores.find((s: any) => s.name === parsed.storeName);
+      }
+
+      if (!targetStore) {
+        return res.status(404).json({ message: "Store not found" });
+      }
+
+      const vendor = await storage.getUser(targetStore.vendorId);
+      if (!vendor) {
+        return res.status(404).json({ message: "Vendor user not found" });
+      }
+
+      const hash = await hashPassword(parsed.newPassword);
+      const updated = await storage.updatePassword(vendor.id, hash);
+      if (!updated) {
+        return res.status(500).json({ message: "Failed to update password" });
+      }
+
+      res.json({ ok: true });
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+      }
+      console.error("Admin reset vendor password error:", error);
+      res.status(500).json({ message: "Failed to reset vendor password" });
+    }
+  });
+
   // Messaging Routes
   app.post('/api/messages', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.userId;
       const validatedData = insertMessageSchema.parse({
         ...req.body,
         senderId: userId,
@@ -1300,7 +3642,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/messages/conversation/:userId', isAuthenticated, async (req: any, res) => {
     try {
-      const currentUserId = req.user.claims.sub;
+      const currentUserId = req.userId;
       const otherUserId = req.params.userId;
       const messages = await storage.getMessagesBetweenUsers(currentUserId, otherUserId);
       res.json(messages);
@@ -1312,12 +3654,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/messages', isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.userId;
       const messages = await storage.getMessagesForUser(userId);
       res.json(messages);
     } catch (error) {
       console.error("Error fetching messages:", error);
       res.status(500).json({ message: "Failed to fetch messages" });
+    }
+  });
+
+  app.put('/api/messages/read', isAuthenticated, async (req: any, res) => {
+    try {
+      const currentUserId = req.userId;
+      const { otherUserId, orderId } = req.body as { otherUserId: string; orderId?: string };
+      if (!otherUserId) return res.status(400).json({ message: 'otherUserId required' });
+      const msgs = await storage.getMessagesBetweenUsers(currentUserId, otherUserId);
+      const targets = msgs.filter(m => !m.read && m.receiverId === currentUserId && (!orderId || m.orderId === orderId));
+      for (const m of targets) {
+        await storage.markMessageAsRead(m.id);
+      }
+      res.json({ marked: targets.length });
+    } catch (error) {
+      console.error('Error marking messages as read:', error);
+      res.status(500).json({ message: 'Failed to mark messages as read' });
     }
   });
 

@@ -4,8 +4,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, X, Store, Package } from "lucide-react";
+import { Check, X, Store, Package, FileText, MessageSquare } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeImagePath } from "@/lib/utils/image";
 
@@ -43,6 +45,17 @@ interface ProductsResponse {
 
 export default function AdminModeration() {
   const { toast } = useToast();
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [docsStoreId, setDocsStoreId] = useState<string | null>(null);
+  const { data: docs = [] } = useQuery<{ name: string; url: string }[]>({
+    queryKey: ['/api/admin/verification/docs', docsStoreId || ''],
+    enabled: !!docsStoreId && docsOpen,
+  });
+  const { data: pendingReviews = [] } = useQuery<any[]>({
+    queryKey: ['/api/admin/reviews?status=pending'],
+    refetchOnMount: true,
+    staleTime: 0,
+  });
 
   const { data: pendingStores, isLoading: isLoadingStores } = useQuery<PendingStore[]>({
     queryKey: ['/api/admin/stores?status=pending'],
@@ -119,12 +132,15 @@ export default function AdminModeration() {
         </div>
 
         <Tabs defaultValue="stores" className="w-full">
-          <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsList className="grid w-full max-w-xl grid-cols-3">
             <TabsTrigger value="stores" data-testid="tab-pending-stores">
               Pending Stores ({pendingStoresList.length})
             </TabsTrigger>
             <TabsTrigger value="products" data-testid="tab-pending-products">
               Pending Products ({pendingProductsList.length})
+            </TabsTrigger>
+            <TabsTrigger value="reviews" data-testid="tab-pending-reviews">
+              Pending Reviews ({pendingReviews.length})
             </TabsTrigger>
           </TabsList>
 
@@ -184,6 +200,15 @@ export default function AdminModeration() {
                         </div>
                       </div>
                       <div className="flex gap-2 pt-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => { setDocsStoreId(store.id); setDocsOpen(true); }}
+                          data-testid={`button-view-docs-${store.id}`}
+                        >
+                          <FileText className="w-4 h-4 mr-2" />
+                          View Docs
+                        </Button>
                         <Button
                           size="sm"
                           variant="default"
@@ -312,7 +337,55 @@ export default function AdminModeration() {
               </div>
             )}
           </TabsContent>
+
+          <TabsContent value="reviews" className="space-y-4">
+            {pendingReviews.length === 0 ? (
+              <Card>
+                <CardContent className="py-12 text-center">
+                  <MessageSquare className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
+                  <h3 className="text-lg font-semibold">No pending reviews</h3>
+                  <p className="text-muted-foreground">All reviews have been moderated</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid gap-4">
+                {pendingReviews.map((r: any) => (
+                  <Card key={r.id}>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        Review • {new Date(r.createdAt).toLocaleString()}
+                        <Badge variant="secondary">Pending</Badge>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <p className="text-sm">{r.comment}</p>
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={() => apiRequest('POST', `/api/admin/reviews/${r.id}/approve`, {}).then(() => queryClient.invalidateQueries({ queryKey: ['/api/admin/reviews?status=pending'] }))}>Approve</Button>
+                        <Button size="sm" variant="destructive" onClick={() => apiRequest('POST', `/api/admin/reviews/${r.id}/reject`, {}).then(() => queryClient.invalidateQueries({ queryKey: ['/api/admin/reviews?status=pending'] }))}>Reject</Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </TabsContent>
         </Tabs>
+        <Dialog open={docsOpen} onOpenChange={setDocsOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Verification Documents</DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-2">
+              {docs.length === 0 ? (
+                <p className="text-muted-foreground">No documents found</p>
+              ) : (
+                docs.map((d, i) => (
+                  <a key={i} href={d.url} className="text-primary" data-testid={`link-admin-doc-${i}`}>{d.name}</a>
+                ))
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </AdminDashboard>
   );

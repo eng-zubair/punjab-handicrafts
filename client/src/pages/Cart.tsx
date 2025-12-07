@@ -18,12 +18,17 @@ import { useToast } from "@/hooks/use-toast";
 import type { CartItem } from "@/lib/cart";
 import { normalizeImagePath } from "@/lib/utils/image";
 import { formatPrice } from "@/lib/utils/price";
+import { useAuth } from "@/hooks/use-auth";
+import { AuthDialog } from "@/components/AuthDialog";
 
 export default function Cart() {
   const [, setLocation] = useLocation();
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [showClearDialog, setShowClearDialog] = useState(false);
   const { toast } = useToast();
+  const { isAuthenticated } = useAuth();
+  const [authDialogOpen, setAuthDialogOpen] = useState(false);
+  const [authDialogTab, setAuthDialogTab] = useState<"login" | "register">("login");
 
   useEffect(() => {
     setCartItems(getCart());
@@ -186,9 +191,9 @@ export default function Cart() {
                           size="icon"
                           onClick={() => handleDecreaseQuantity(item)}
                           data-testid={`button-decrease-qty-${item.productId}`}
-                          className="h-8 w-8"
+                          className="h-10 w-10"
                         >
-                          <Minus className="w-3 h-3" />
+                          <Minus className="w-4 h-4" />
                         </Button>
                         <span 
                           className="w-12 text-center font-semibold" 
@@ -201,10 +206,10 @@ export default function Cart() {
                           size="icon"
                           onClick={() => handleIncreaseQuantity(item)}
                           data-testid={`button-increase-qty-${item.productId}`}
-                          className="h-8 w-8"
+                          className="h-10 w-10"
                           disabled={item.quantity >= item.stock}
                         >
-                          <Plus className="w-3 h-3" />
+                          <Plus className="w-4 h-4" />
                         </Button>
                       </div>
                       <span className="text-xs text-muted-foreground">
@@ -246,7 +251,20 @@ export default function Cart() {
               </div>
             </CardContent>
             <CardFooter>
-              <Button className="w-full" size="lg" data-testid="button-checkout">
+              <Button
+                className="w-full"
+                size="lg"
+                data-testid="button-checkout"
+                onClick={() => {
+                  if (!isAuthenticated) {
+                    setAuthDialogTab("login");
+                    setAuthDialogOpen(true);
+                    toast({ title: "Login required", description: "Please login to proceed to checkout." });
+                    return;
+                  }
+                  setLocation('/checkout');
+                }}
+              >
                 Proceed to Checkout
               </Button>
             </CardFooter>
@@ -272,6 +290,12 @@ export default function Cart() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AuthDialog 
+        open={authDialogOpen} 
+        onOpenChange={setAuthDialogOpen}
+        defaultTab={authDialogTab}
+      />
     </div>
   );
 }
