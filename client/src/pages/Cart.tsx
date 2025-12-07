@@ -56,19 +56,19 @@ export default function Cart() {
       });
       return;
     }
-    updateCartItemQuantity(item.productId, item.quantity + 1);
+    updateCartItemQuantity(item.productId, item.quantity + 1, item.variant?.sku);
   };
 
   const handleDecreaseQuantity = (item: CartItem) => {
     if (item.quantity > 1) {
-      updateCartItemQuantity(item.productId, item.quantity - 1);
+      updateCartItemQuantity(item.productId, item.quantity - 1, item.variant?.sku);
     } else {
       handleRemoveItem(item);
     }
   };
 
   const handleRemoveItem = (item: CartItem) => {
-    removeFromCart(item.productId);
+    removeFromCart(item.productId, item.variant?.sku);
     toast({
       title: "Item removed",
       description: `${item.title} has been removed from your cart.`,

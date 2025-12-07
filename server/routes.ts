@@ -3,7 +3,7 @@ import express from "express";
 import { createServer, type Server } from "http";
 import passport from "passport";
 import { storage } from "./storage";
-import { reviews, users, promotionProductHistory, promotionProducts, promotions, taxRules, shippingRateRules, platformSettings, configAudits } from "@shared/schema";
+import { reviews, users, promotionProductHistory, promotionProducts, promotions, taxRules, shippingRateRules, platformSettings, configAudits, productVariants } from "@shared/schema";
 import { db, pool } from "./db";
 import { sql, and, eq, inArray, desc } from "drizzle-orm";
 import { setupAuth, isAuthenticated, hashPassword } from "./auth";
@@ -22,6 +22,7 @@ import {
   insertPayoutSchema,
   insertProductGroupSchema,
   insertPromotionSchema,
+  variantSchema,
   registerSchema,
   loginSchema,
   type User,
@@ -174,6 +175,9 @@ const uploadVerification = multer({
 
 export async function registerRoutes(app: Express): Promise<Server> {
   console.log('Registering routes...');
+  try {
+    await ensureVariantSchema();
+  } catch {}
   
   app.get('/api/ping-test', (req, res) => {
     console.log('Ping test hit');
@@ -207,6 +211,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
       orderSchemaEnsured = true;
     } catch (e) {
       console.error('ensureOrderSchema error:', e);
+    }
+  }
+  let variantSchemaEnsured = false;
+  async function ensureVariantSchema() {
+    if (variantSchemaEnsured) return;
+    const stmts = [
+      `CREATE TABLE IF NOT EXISTS product_variants (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        product_id varchar NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        name text NOT NULL,
+        sku varchar UNIQUE NOT NULL,
+        attributes jsonb NOT NULL,
+        price numeric(10,2) NOT NULL,
+        stock integer NOT NULL DEFAULT 0,
+        barcode varchar,
+        weight_kg numeric(10,3),
+        length_cm numeric(10,2),
+        width_cm numeric(10,2),
+        height_cm numeric(10,2),
+        images text[],
+        is_active boolean NOT NULL DEFAULT true,
+        created_at timestamp DEFAULT now() NOT NULL,
+        updated_at timestamp DEFAULT now() NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS IDX_variant_product ON product_variants(product_id)`,
+      `ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS name text`,
+      `ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS barcode varchar`,
+      `ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS weight_kg numeric(10,3)`,
+      `ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS length_cm numeric(10,2)`,
+      `ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS width_cm numeric(10,2)`,
+      `ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS height_cm numeric(10,2)`,
+      `ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS images text[]`,
+      `ALTER TABLE order_items ADD COLUMN IF NOT EXISTS variant_sku varchar`,
+      `ALTER TABLE order_items ADD COLUMN IF NOT EXISTS variant_attributes jsonb`
+    ];
+    try {
+      for (const s of stmts) {
+        await pool.query(s);
+      }
+      variantSchemaEnsured = true;
+    } catch (e) {
+      console.error('ensureVariantSchema error:', e);
     }
   }
   let taxShipSchemaEnsured = false;
@@ -919,11 +965,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/products/:id', async (req, res) => {
     try {
+      await ensureVariantSchema();
       const product = await storage.getProduct(req.params.id);
       if (!product) {
         return res.status(404).json({ message: "Product not found" });
       }
-      res.json(serializeProduct(product));
+      const vPage = Number((req.query.variantsPage as string) || 1);
+      const vSize = Number((req.query.variantsPageSize as string) || 50);
+      const { variants: vRows, total: vTotal } = await storage.getVariantsByProductPaginated(product.id, Math.max(1, vPage), Math.max(1, vSize));
+      const variants = vRows.map((v: any) => ({
+        type: String(v.attributes?.type || ''),
+        option: String(v.attributes?.option || ''),
+        sku: String(v.sku),
+        price: parseFloat(String(v.price)),
+        stock: Number(v.stock || 0),
+      }));
+      res.json({ ...serializeProduct(product), variants, variantsPagination: { page: Math.max(1, vPage), pageSize: Math.max(1, vSize), total: vTotal, totalPages: Math.ceil(vTotal / Math.max(1, vSize)) } });
     } catch (error) {
       console.error("Error fetching product:", error);
       res.status(500).json({ message: "Failed to fetch product" });
@@ -1401,6 +1458,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Vendor Product Management Routes
   app.post('/api/products', isAuthenticated, isVendor, async (req: any, res) => {
     try {
+      await ensureVariantSchema();
       const { storeId, variants, ...productData } = req.body;
       const store = await storage.getStore(storeId);
       
@@ -1413,8 +1471,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const processedVariants = variants && typeof variants === 'object' ? JSON.stringify(variants) : variants;
-      const validatedData = insertProductSchema.parse({ storeId, variants: processedVariants, ...productData });
+      let validatedData = insertProductSchema.parse({ storeId, variants: processedVariants, ...productData });
+      if (Array.isArray(variants)) {
+        const variantStockTotal = variants.reduce((s: number, v: any) => s + Number(v?.stock || 0), 0);
+        validatedData = { ...validatedData, stock: variantStockTotal } as any;
+      }
       const product = await storage.createProduct(validatedData);
+      if (Array.isArray(variants)) {
+        for (const v of variants) {
+          const ok = variantSchema.parse(v);
+          await storage.createProductVariant({
+            productId: product.id,
+            name: ok.name as any,
+            sku: ok.sku,
+            attributes: { type: ok.type, option: ok.option } as any,
+            price: String(ok.price),
+            stock: Number(ok.stock),
+            barcode: (ok as any).barcode,
+            weightKg: (ok as any).weightKg ? String((ok as any).weightKg) : undefined,
+            lengthCm: (ok as any).lengthCm ? String((ok as any).lengthCm) : undefined,
+            widthCm: (ok as any).widthCm ? String((ok as any).widthCm) : undefined,
+            heightCm: (ok as any).heightCm ? String((ok as any).heightCm) : undefined,
+            images: (ok as any).images,
+            isActive: true,
+          } as any);
+        }
+      }
       res.status(201).json(serializeProduct(product));
     } catch (error: any) {
       console.error("Error creating product:", error);
@@ -1549,12 +1631,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       try {
+        const imgs = Array.isArray((existingProduct as any).images) ? (existingProduct as any).images : [];
+        const baseDir = path.join(process.cwd(), 'uploads', 'product-images', String(store.id));
+        for (const img of imgs) {
+          try {
+            const rel = String(img || '').replace(/^\//, '');
+            const abs = path.join(process.cwd(), rel);
+            if (abs.startsWith(baseDir)) {
+              await fs.unlink(abs);
+            }
+          } catch {}
+        }
         await storage.deleteProduct(productId);
+        try {
+          await db.insert(configAudits).values({ entityType: 'product', entityId: productId, action: 'delete', changes: { title: (existingProduct as any).title, storeId: (existingProduct as any).storeId }, changedBy: req.userId } as any);
+        } catch {}
         return res.status(204).send();
       } catch (err: any) {
         // If product is referenced by orders, archive (soft delete) instead
         if (String(err?.code) === '23503' || /foreign key/i.test(String(err?.message || ''))) {
           const updated = await storage.updateProductActiveStatus(productId, false);
+          try {
+            await db.insert(configAudits).values({ entityType: 'product', entityId: productId, action: 'archive', changes: null as any, changedBy: req.userId } as any);
+          } catch {}
           return res.status(200).json(serializeProduct(updated!));
         }
         throw err;
@@ -1956,6 +2055,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get('/api/promotions/active-by-variants', async (req: any, res) => {
+    try {
+      const skusParam = (req.query.skus as string) || '';
+      const skus = skusParam.split(',').map(s => s.trim()).filter(Boolean);
+      if (skus.length === 0) {
+        return res.json([]);
+      }
+      const promos = await db
+        .select()
+        .from(promotions)
+        .where(and(eq(promotions.appliesTo, 'variant'), inArray(promotions.targetId, skus)));
+      const now = Date.now();
+      const out = promos
+        .map((p: any) => {
+          const startOk = !p.startAt || new Date(p.startAt).getTime() <= now;
+          const endOk = !p.endAt || new Date(p.endAt).getTime() >= now;
+          const isActive = p.status === 'active' && startOk && endOk;
+          return { targetId: p.targetId, type: p.type, value: String(p.value), endAt: p.endAt ? String(p.endAt) : null, isActive };
+        })
+        .filter((x: any) => x.isActive);
+      res.json(out);
+    } catch (error) {
+      console.error('Error fetching active promotions by variants:', error);
+      res.status(500).json({ message: 'Failed to fetch promotions' });
+    }
+  });
+
   app.post('/api/vendor/promotions/:id/products/bulk', isAuthenticated, isVendor, async (req: any, res) => {
     try {
       const promotionId = req.params.id;
@@ -2061,9 +2187,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/checkout/calculate', async (req: any, res) => {
     try {
       await ensureOrderSchema();
+      await ensureVariantSchema();
       await ensureTaxShipSchema();
       const userId = req.userId || 'anonymous';
-      const { items, shippingAddress, shippingStreet, shippingCity, shippingProvince, shippingPostalCode, shippingCountry, shippingMethod } = req.body as { items: Array<{ productId: string; storeId: string; quantity: number; price?: string }>; shippingAddress?: string; shippingStreet?: string; shippingCity?: string; shippingProvince?: string; shippingPostalCode?: string; shippingCountry?: string; shippingMethod?: string };
+      const { items, shippingAddress, shippingStreet, shippingCity, shippingProvince, shippingPostalCode, shippingCountry, shippingMethod } = req.body as { items: Array<{ productId: string; storeId: string; quantity: number; price?: string; variantSku?: string; variantAttributes?: any }>; shippingAddress?: string; shippingStreet?: string; shippingCity?: string; shippingProvince?: string; shippingPostalCode?: string; shippingCountry?: string; shippingMethod?: string };
       if (!items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ message: 'Items required' });
       }
@@ -2071,17 +2198,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const productIds: string[] = items.map(i => i.productId);
       const productsList = await Promise.all(productIds.map((id) => storage.getProduct(id)));
       const productMap = new Map((productsList || []).filter(Boolean).map((p: any) => [p.id, p]));
-      const normalized = items.map(i => ({
-        productId: i.productId,
-        storeId: i.storeId,
-        quantity: i.quantity,
-        price: (i.price ?? String(productMap.get(i.productId)?.price ?? '0')),
-        weightKg: productMap.get(i.productId)?.weightKg ? parseFloat(String(productMap.get(i.productId)?.weightKg)) : undefined,
-        lengthCm: productMap.get(i.productId)?.lengthCm ? parseFloat(String(productMap.get(i.productId)?.lengthCm)) : undefined,
-        widthCm: productMap.get(i.productId)?.widthCm ? parseFloat(String(productMap.get(i.productId)?.widthCm)) : undefined,
-        heightCm: productMap.get(i.productId)?.heightCm ? parseFloat(String(productMap.get(i.productId)?.heightCm)) : undefined,
-        productCategory: productMap.get(i.productId)?.category,
-        taxExempt: !!productMap.get(i.productId)?.taxExempt,
+      const normalized = await Promise.all(items.map(async (i) => {
+        let variantRow: any = null;
+        if (i.variantSku) {
+          variantRow = await storage.getVariantBySku(String(i.variantSku));
+        }
+        const priceSource = variantRow ? String(variantRow.price) : String(productMap.get(i.productId)?.price ?? '0');
+        return {
+          productId: i.productId,
+          storeId: i.storeId,
+          quantity: i.quantity,
+          price: (i.price ?? priceSource),
+          variantSku: i.variantSku || null,
+          variantAttributes: i.variantAttributes || null,
+          weightKg: productMap.get(i.productId)?.weightKg ? parseFloat(String(productMap.get(i.productId)?.weightKg)) : undefined,
+          lengthCm: productMap.get(i.productId)?.lengthCm ? parseFloat(String(productMap.get(i.productId)?.lengthCm)) : undefined,
+          widthCm: productMap.get(i.productId)?.widthCm ? parseFloat(String(productMap.get(i.productId)?.widthCm)) : undefined,
+          heightCm: productMap.get(i.productId)?.heightCm ? parseFloat(String(productMap.get(i.productId)?.heightCm)) : undefined,
+          productCategory: productMap.get(i.productId)?.category,
+          taxExempt: !!productMap.get(i.productId)?.taxExempt,
+        };
       }));
       const subtotal = normalized.reduce((s, it) => s + parseFloat(String(it.price)) * Number(it.quantity), 0);
       const province = shippingProvince || detectProvince(shippingAddress || [shippingStreet, shippingCity, shippingProvince, shippingPostalCode, shippingCountry].filter(Boolean).join(', '));
@@ -2097,6 +2233,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/orders', isAuthenticated, async (req: any, res) => {
     try {
       await ensureOrderSchema();
+      await ensureVariantSchema();
       await ensureTaxShipSchema();
       const userId = req.userId;
       const { items, paymentMethod, phoneNumber, preferredCommunication, saveInfo,
@@ -2154,6 +2291,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         activeByProduct[r.productId] = arr;
       }
 
+      // Variant-targeted promotions by SKU
+      const variantSkus = items.map((i: any) => i.variantSku).filter(Boolean) as string[];
+      const activeByVariantSku: Record<string, Array<{ type: string; value: string; minQuantity: number }>> = {};
+      if (variantSkus.length > 0) {
+        try {
+          const vPromos = await db
+            .select()
+            .from(promotions)
+            .where(and(eq(promotions.appliesTo, 'variant'), inArray(promotions.targetId, Array.from(new Set(variantSkus)))));
+          for (const p of vPromos as any[]) {
+            const startOk = !p.startAt || new Date(p.startAt as any).getTime() <= now;
+            const endOk = !p.endAt || new Date(p.endAt as any).getTime() >= now;
+            const isActive = String(p.status) === 'active' && startOk && endOk;
+            if (!isActive) continue;
+            const arr = activeByVariantSku[String(p.targetId)] || [];
+            arr.push({ type: String(p.type), value: String(p.value), minQuantity: Number(p.minQuantity || 1) });
+            activeByVariantSku[String(p.targetId)] = arr;
+          }
+        } catch {}
+      }
+
       log(`Order create start: user=${userId} items=${items.length}`);
 
       for (const item of items) {
@@ -2162,8 +2320,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (product.status !== 'approved' || product.isActive !== true) {
           return res.status(400).json({ message: "Product not available" });
         }
-        if (item.quantity <= 0 || item.quantity > product.stock) {
-          return res.status(400).json({ message: "Insufficient stock for product" });
+        let variantRow: any = null;
+        if (item.variantSku) {
+          variantRow = await storage.getVariantBySku(String(item.variantSku));
+          if (!variantRow || String(variantRow.productId) !== String(item.productId)) {
+            return res.status(400).json({ message: "Invalid product variant" });
+          }
+          if (item.quantity <= 0 || item.quantity > Number(variantRow.stock || 0)) {
+            return res.status(400).json({ message: "Insufficient stock for selected variant" });
+          }
+        } else {
+          if (item.quantity <= 0 || item.quantity > product.stock) {
+            return res.status(400).json({ message: "Insufficient stock for product" });
+          }
         }
         if (lowerMethod === 'cod') {
           const store = await storage.getStore(product.storeId);
@@ -2172,13 +2341,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
-        const base = parseFloat(String(product.price));
+        const base = variantRow ? parseFloat(String(variantRow.price)) : parseFloat(String(product.price));
         let effectivePrice = base;
-        const applicablePromos = (activeByProduct[item.productId] || []).filter(p => item.quantity >= p.minQuantity);
+        const applicablePromos = [
+          ...(activeByProduct[item.productId] || []).filter(p => item.quantity >= p.minQuantity),
+          ...((item.variantSku ? (activeByVariantSku[String(item.variantSku)] || []) : [])
+              .filter(p => item.quantity >= p.minQuantity)
+              .map((p) => ({ ...p, overridePrice: null })))
+        ];
         const candidates: number[] = [base];
         for (const ap of applicablePromos) {
-          if (ap.overridePrice != null) {
-            const v = parseFloat(ap.overridePrice);
+          if ((ap as any).overridePrice != null) {
+            const v = parseFloat(String((ap as any).overridePrice));
             if (!Number.isNaN(v)) candidates.push(Math.max(0, v));
             continue;
           }
@@ -2187,6 +2361,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             candidates.push(Math.max(0, base * (100 - valNum) / 100));
           } else if (ap.type === 'fixed' && !Number.isNaN(valNum)) {
             candidates.push(Math.max(0, base - valNum));
+          } else if ((ap.type === 'override' || ap.type === 'fixed_override') && !Number.isNaN(valNum)) {
+            candidates.push(Math.max(0, valNum));
           }
         }
         effectivePrice = Number(Math.min(...candidates).toFixed(2));
@@ -2200,6 +2376,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           storeId: product.storeId,
           quantity: item.quantity,
           price: effectivePrice.toFixed(2),
+          variantSku: item.variantSku || null,
+          variantAttributes: item.variantAttributes || null,
         });
       }
 
@@ -2273,10 +2451,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       for (const vi of validatedItems) {
-        const p = await storage.getProduct(vi.productId);
-        if (p) {
-          const newStock = Math.max(0, (p.stock || 0) - vi.quantity);
-          await storage.updateProduct(p.id, { stock: newStock });
+        if (vi.variantSku) {
+          try {
+            const current = await storage.getVariantBySku(String(vi.variantSku));
+            if (current) {
+              const newStock = Math.max(0, Number(current.stock || 0) - vi.quantity);
+              await storage.updateProductVariant(current.id, { stock: newStock } as any);
+            }
+          } catch {}
+        } else {
+          const p = await storage.getProduct(vi.productId);
+          if (p) {
+            const newStock = Math.max(0, (p.stock || 0) - vi.quantity);
+            await storage.updateProduct(p.id, { stock: newStock });
+          }
         }
       }
 
@@ -2875,6 +3063,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Vendor Dashboard Routes
   app.get('/api/vendor/orders', isAuthenticated, isVendor, async (req: any, res) => {
     try {
+      await ensureVariantSchema();
       const stores = await storage.getStoresByVendor(req.userId);
       const allOrders = await Promise.all(
         stores.map(store => storage.getOrdersByStore(store.id))
@@ -3144,6 +3333,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .map(([brand, count]) => ({ brand, count }))
         .sort((a, b) => b.count - a.count);
 
+      // SKU-level metrics
+      let skuMetrics: Array<{ sku: string; units: number; revenue: number; stock: number }> = [];
+      try {
+        const orderIds = orders.map((o: any) => o.id);
+        const itemsGrouped = await storage.getOrderItemsWithProductsForOrders(orderIds);
+        const skuAgg: Record<string, { units: number; revenue: number }> = {};
+        for (const oid of Object.keys(itemsGrouped)) {
+          for (const it of (itemsGrouped[oid] || []) as any[]) {
+            if (!it.variantSku) continue;
+            const key = String(it.variantSku);
+            const units = Number(it.quantity || 0);
+            const price = parseFloat(String(it.price));
+            const revenue = units * price;
+            const prev = skuAgg[key] || { units: 0, revenue: 0 };
+            skuAgg[key] = { units: prev.units + units, revenue: prev.revenue + revenue };
+          }
+        }
+        const skus = Object.keys(skuAgg);
+        const variantStocks: Record<string, number> = {};
+        if (skus.length > 0) {
+          const vars = await db.select().from(productVariants).where(inArray(productVariants.sku, skus));
+          for (const v of vars as any[]) {
+            variantStocks[String(v.sku)] = Number(v.stock || 0);
+          }
+        }
+        skuMetrics = skus.map(sku => ({ sku, units: skuAgg[sku].units, revenue: Number(skuAgg[sku].revenue.toFixed(2)), stock: variantStocks[sku] ?? 0 }));
+      } catch {}
+
       const analytics = {
         totalProducts: products.total,
         totalStores: stores.length,
@@ -3159,6 +3376,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         topGIBrands,
         codOrders,
         codDelivered,
+        skuMetrics,
       };
       res.json(analytics);
     } catch (error) {

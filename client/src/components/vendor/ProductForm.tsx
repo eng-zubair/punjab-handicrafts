@@ -97,6 +97,22 @@ const productFormSchema = z
           path: ["variants"],
         });
       }
+      // Enforce unique variant SKUs
+      if (data.variants && data.variants.length > 0) {
+        const skus = data.variants.map(v => v.sku.trim()).filter(Boolean);
+        const seen = new Set<string>();
+        for (const s of skus) {
+          if (seen.has(s)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `Duplicate SKU: ${s}`,
+              path: ["variants"],
+            });
+            break;
+          }
+          seen.add(s);
+        }
+      }
     }
   });
 
@@ -170,6 +186,12 @@ export default function ProductForm({
     name: "variants",
   });
 
+  const variantsWatch = form.watch("variants") as unknown as Variant[] | undefined;
+  const hasVariants = form.watch("hasVariants");
+  const variantTotalStock = hasVariants && Array.isArray(variantsWatch)
+    ? variantsWatch.reduce((s, v) => s + (Number((v as any)?.stock || 0)), 0)
+    : undefined;
+
   useEffect(() => {
     form.setValue("images", uploadedImages);
   }, [uploadedImages]);
@@ -229,7 +251,10 @@ export default function ProductForm({
         images: uploadedImages,
         category: values.category,
         hasVariants: values.hasVariants,
-        variants: values.hasVariants ? values.variants ?? [] : undefined,
+        variants: values.hasVariants ? (values.variants ?? []).map((v) => ({
+          ...v,
+          name: v.name && v.name.trim().length ? v.name : `${v.type} ${v.option}`,
+        })) : undefined,
       };
       if (mode === "create") {
         return apiRequest("POST", "/api/products", body);
@@ -266,7 +291,36 @@ export default function ProductForm({
     mutation.mutate(values);
   };
 
-  const hasVariants = form.watch("hasVariants");
+  const handleVariantImageUpload = async (index: number, files: File[]) => {
+    if (!store || files.length === 0) return;
+    const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    const oversized = files.find((f) => f.size > 5 * 1024 * 1024);
+    if (oversized) {
+      toast({ title: "File too large", description: `${oversized.name} exceeds 5MB`, variant: "destructive" });
+      return;
+    }
+    const bad = files.find((f) => !allowed.includes(f.type));
+    if (bad) {
+      toast({ title: "Unsupported format", description: `${bad.name} is not JPG/PNG/WebP`, variant: "destructive" });
+      return;
+    }
+    try {
+      const fd = new FormData();
+      files.forEach((f) => fd.append("images", f));
+      const res = await fetch(`/api/upload/product-images?storeId=${store.id}`, { method: "POST", credentials: "include", body: fd });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Upload failed" }));
+        throw new Error(err.message || "Upload failed");
+      }
+      const data = await res.json();
+      const current = (form.getValues(`variants.${index}.images` as const) as unknown as string[]) || [];
+      form.setValue(`variants.${index}.images` as const, [...current, ...data.images]);
+      toast({ title: "Variant images uploaded", description: `${data.images.length} image(s) added` });
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e.message || String(e), variant: "destructive" });
+    }
+  };
+
 
   return (
     <Form {...form}>
@@ -324,6 +378,11 @@ export default function ProductForm({
                   <Input id="stock" type="number" inputMode="numeric" placeholder="10" data-testid="input-product-stock" {...field} />
                 </FormControl>
                 <FormMessage />
+                {hasVariants && (
+                  <FormDescription>
+                    When variants are enabled, base stock is derived: {variantTotalStock ?? 0}
+                  </FormDescription>
+                )}
               </FormItem>
             )}
           />
@@ -436,7 +495,7 @@ export default function ProductForm({
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => append({ type: "", option: "", sku: "", price: 0, stock: 0 })}
+                onClick={() => append({ type: "", option: "", sku: "", price: 0, stock: 0, barcode: "", weightKg: undefined, lengthCm: undefined, widthCm: undefined, heightCm: undefined, images: [] } as any)}
               >
                 <Plus className="h-4 w-4 mr-2" />
                 Add Variant
@@ -485,6 +544,21 @@ export default function ProductForm({
                   />
                 </div>
 
+                <FormField
+                  control={form.control}
+                  name={`variants.${index}.name` as const}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Variant Name<span aria-hidden="true" className="text-destructive"> *</span></FormLabel>
+                      <FormControl>
+                        <Input placeholder="Size Small" className="h-8" aria-required="true" {...field} />
+                      </FormControl>
+                      <FormDescription>Used for display. Defaults to Type + Option if left blank.</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <FormField
                     control={form.control}
@@ -526,6 +600,122 @@ export default function ProductForm({
                     )}
                   />
                 </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                  <FormField
+                    control={form.control}
+                    name={`variants.${index}.barcode` as const}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Barcode/ISBN (optional)</FormLabel>
+                        <FormControl>
+                          <Input placeholder="978-..." className="h-8" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name={`variants.${index}.weightKg` as const}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Weight (kg)</FormLabel>
+                        <FormControl>
+                          <Input type="number" step="0.001" placeholder="0.5" className="h-8" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name={`variants.${index}.lengthCm` as const}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Length (cm)</FormLabel>
+                        <FormControl>
+                          <Input type="number" step="0.01" placeholder="10" className="h-8" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name={`variants.${index}.widthCm` as const}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Width (cm)</FormLabel>
+                        <FormControl>
+                          <Input type="number" step="0.01" placeholder="5" className="h-8" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name={`variants.${index}.heightCm` as const}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Height (cm)</FormLabel>
+                        <FormControl>
+                          <Input type="number" step="0.01" placeholder="2" className="h-8" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name={`variants.${index}.images` as const}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Variant Images</FormLabel>
+                      <FormControl>
+                        <div
+                          className="border rounded-md p-3 bg-background"
+                          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                          onDrop={async (e) => {
+                            e.preventDefault();
+                            const files = Array.from(e.dataTransfer.files || []).filter(f => /image\/(jpeg|jpg|png|webp)/i.test(f.type));
+                            await handleVariantImageUpload(index, files as File[]);
+                          }}
+                          aria-label="Drop images here"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="file"
+                              accept="image/jpeg,image/jpg,image/png,image/webp"
+                              multiple
+                              aria-label="Upload variant images"
+                              onChange={async (e) => {
+                                const list = e.target.files;
+                                const files = list ? Array.from(list) : [];
+                                await handleVariantImageUpload(index, files);
+                              }}
+                              className="h-8"
+                            />
+                            <span className="text-xs text-muted-foreground">Max 5MB per image. JPG/PNG/WebP.</span>
+                          </div>
+                          {Array.isArray(field.value) && field.value.length > 0 && (
+                            <div className="flex gap-2 flex-wrap mt-2" aria-live="polite">
+                              {field.value.map((img: string, i: number) => (
+                                <div key={i} className="relative w-16 h-16 rounded border">
+                                  <img src={normalizeImagePath(img)} alt={`Variant ${index + 1} - ${i + 1}`} className="w-full h-full object-cover rounded" />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
             ))}
             {fields.length === 0 && (

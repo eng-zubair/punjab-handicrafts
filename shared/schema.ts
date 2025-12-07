@@ -72,6 +72,29 @@ export const products = pgTable("products", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const productVariants = pgTable(
+  "product_variants",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    productId: varchar("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    sku: varchar("sku").unique().notNull(),
+    attributes: jsonb("attributes").notNull(),
+    price: decimal("price", { precision: 10, scale: 2 }).notNull(),
+    stock: integer("stock").notNull().default(0),
+    barcode: varchar("barcode"),
+    weightKg: decimal("weight_kg", { precision: 10, scale: 3 }),
+    lengthCm: decimal("length_cm", { precision: 10, scale: 2 }),
+    widthCm: decimal("width_cm", { precision: 10, scale: 2 }),
+    heightCm: decimal("height_cm", { precision: 10, scale: 2 }),
+    images: text("images").array(),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [index("IDX_variant_product").on(table.productId)]
+);
+
 export const orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   buyerId: varchar("buyer_id").notNull().references(() => users.id),
@@ -126,6 +149,8 @@ export const orderItems = pgTable("order_items", {
   storeId: varchar("store_id").notNull().references(() => stores.id),
   quantity: integer("quantity").notNull(),
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
+  variantSku: varchar("variant_sku"),
+  variantAttributes: jsonb("variant_attributes"),
 });
 
 export const categories = pgTable("categories", {
@@ -278,13 +303,25 @@ export const PRODUCT_CATEGORIES = [
   "Other"
 ] as const;
 
-export const variantSchema = z.object({
-  type: z.string().min(1, "Variant type is required"),
-  option: z.string().min(1, "Variant option is required"),
-  sku: z.string().min(1, "SKU is required"),
-  price: z.coerce.number().min(0, "Price must be positive"),
-  stock: z.coerce.number().min(0, "Stock must be positive"),
-});
+export const variantSchema = z
+  .object({
+    type: z.string().min(1, "Variant type is required"),
+    option: z.string().min(1, "Variant option is required"),
+    name: z.string().min(1, "Variant name is required").optional(),
+    sku: z.string().min(1, "SKU is required"),
+    price: z.coerce.number().min(0, "Price must be positive"),
+    stock: z.coerce.number().min(0, "Stock must be positive"),
+    barcode: z.string().optional(),
+    weightKg: z.coerce.number().min(0, "Weight must be non-negative").optional(),
+    lengthCm: z.coerce.number().min(0, "Length must be non-negative").optional(),
+    widthCm: z.coerce.number().min(0, "Width must be non-negative").optional(),
+    heightCm: z.coerce.number().min(0, "Height must be non-negative").optional(),
+    images: z.array(z.string()).optional(),
+  })
+  .transform((v) => ({
+    ...v,
+    name: v.name && v.name.trim().length ? v.name : `${v.type} ${v.option}`,
+  }));
 
 export type Variant = z.infer<typeof variantSchema>;
 
@@ -319,6 +356,12 @@ export const insertOrderSchema = createInsertSchema(orders).omit({
 
 export const insertOrderItemSchema = createInsertSchema(orderItems).omit({
   id: true,
+});
+
+export const insertProductVariantSchema = createInsertSchema(productVariants).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
 });
 
 export const insertCategorySchema = createInsertSchema(categories).omit({
@@ -404,6 +447,9 @@ export type Store = typeof stores.$inferSelect;
 
 export type InsertProduct = z.infer<typeof insertProductSchema>;
 export type Product = typeof products.$inferSelect;
+
+export type InsertProductVariant = z.infer<typeof insertProductVariantSchema>;
+export type ProductVariant = typeof productVariants.$inferSelect;
 
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
 export type Order = typeof orders.$inferSelect;

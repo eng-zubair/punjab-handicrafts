@@ -12,7 +12,7 @@ import { formatPrice } from "@/lib/utils/price";
 import { normalizeImagePath } from "@/lib/utils/image";
 import { useLocation } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
-import { CheckCircle, Truck, Wallet, CreditCard, Phone } from "lucide-react";
+import { CheckCircle, Truck, Wallet, CreditCard, Phone, ShoppingCart } from "lucide-react";
 import OrderReceipt from "@/components/OrderReceipt";
 
 type Step = "method" | "review" | "complete";
@@ -180,6 +180,8 @@ export default function Checkout() {
         storeId: i.storeId,
         quantity: i.quantity,
         price: i.price,
+        variantSku: i.variant?.sku,
+        variantAttributes: i.variant ? { type: i.variant.type, option: i.variant.option } : undefined,
       }));
       console.info('Checkout placing order', {
         paymentMethod,
@@ -257,8 +259,21 @@ export default function Checkout() {
       <main className="flex-1 bg-muted/30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="mb-6">
-            <h1 className="text-3xl font-bold">Checkout</h1>
-            <p className="text-muted-foreground">Securely confirm your order</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-3xl font-bold">Checkout</h1>
+                <p className="text-muted-foreground">Securely confirm your order</p>
+              </div>
+              <Button
+                variant="ghost"
+                onClick={() => setLocation('/cart')}
+                aria-label="Back to cart"
+                data-testid="link-back-to-cart"
+              >
+                <ShoppingCart className="w-4 h-4 mr-2" />
+                Back to Cart
+              </Button>
+            </div>
           </div>
 
           {step === "method" && (

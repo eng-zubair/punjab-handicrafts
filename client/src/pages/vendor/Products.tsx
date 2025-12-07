@@ -350,17 +350,30 @@ export default function VendorProducts() {
 
   const deleteProductMutation = useMutation({
     mutationFn: async (id: string) => {
-      return apiRequest('DELETE', `/api/vendor/products/${id}`, {});
+      const res = await apiRequest('DELETE', `/api/vendor/products/${id}`, {});
+      return res;
     },
-    onSuccess: () => {
+    onSuccess: async (res: Response) => {
       queryClient.invalidateQueries({ queryKey: ['/api/vendor/products'] });
       queryClient.invalidateQueries({ queryKey: ['/api/vendor/analytics'] });
       setDeleteDialogOpen(false);
       setSelectedProduct(null);
-      toast({
-        title: "Product deleted",
-        description: "Your product has been removed",
-      });
+      if (res.status === 204) {
+        toast({ title: 'Product deleted', description: 'Your product has been permanently removed' });
+      } else if (res.status === 200) {
+        try {
+          const updated = await res.json();
+          if (updated && updated.isActive === false) {
+            toast({ title: 'Product archived', description: 'Product is linked to orders and was archived instead' });
+          } else {
+            toast({ title: 'Product updated', description: 'Product state changed' });
+          }
+        } catch {
+          toast({ title: 'Product updated', description: 'Product state changed' });
+        }
+      } else {
+        toast({ title: 'Product updated', description: 'Operation completed' });
+      }
     },
     onError: (error: Error) => {
       toast({

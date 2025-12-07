@@ -18,12 +18,15 @@ import {
   reviewMedia,
   reviewVotes,
   productCategories,
+  productVariants,
   type User,
   type UpsertUser,
   type InsertStore,
   type Store,
   type InsertProduct,
   type Product,
+  type InsertProductVariant,
+  type ProductVariant,
   type InsertOrder,
   type Order,
   type InsertOrderItem,
@@ -108,6 +111,14 @@ export interface IStorage {
   updateProductStatus(id: string, status: string): Promise<Product | undefined>;
   updateProductActiveStatus(id: string, isActive: boolean): Promise<Product | undefined>;
   deleteProduct(id: string): Promise<void>;
+
+  // Variant operations
+  createProductVariant(variant: InsertProductVariant): Promise<ProductVariant>;
+  getVariantsByProduct(productId: string): Promise<ProductVariant[]>;
+  getVariantBySku(sku: string): Promise<ProductVariant | undefined>;
+  updateProductVariant(id: string, updates: Partial<InsertProductVariant>): Promise<ProductVariant | undefined>;
+  deleteProductVariant(id: string): Promise<void>;
+  getVariantsByProductPaginated(productId: string, page: number, pageSize: number): Promise<{ variants: ProductVariant[]; total: number }>;
 
   // Product Group operations
   createProductGroup(group: InsertProductGroup): Promise<ProductGroup>;
@@ -440,6 +451,45 @@ export class DatabaseStorage implements IStorage {
       .where(eq(products.id, id))
       .returning();
     return product ? normalizeProductImages(product) : undefined;
+  }
+
+  async createProductVariant(variant: InsertProductVariant): Promise<ProductVariant> {
+    const [row] = await db.insert(productVariants).values(variant).returning();
+    return row;
+  }
+
+  async getVariantsByProduct(productId: string): Promise<ProductVariant[]> {
+    return await db.select().from(productVariants).where(eq(productVariants.productId, productId));
+  }
+
+  async getVariantBySku(sku: string): Promise<ProductVariant | undefined> {
+    const [row] = await db.select().from(productVariants).where(eq(productVariants.sku, sku));
+    return row;
+  }
+
+  async updateProductVariant(id: string, updates: Partial<InsertProductVariant>): Promise<ProductVariant | undefined> {
+    const [row] = await db.update(productVariants).set(updates).where(eq(productVariants.id, id)).returning();
+    return row;
+  }
+
+  async deleteProductVariant(id: string): Promise<void> {
+    await db.delete(productVariants).where(eq(productVariants.id, id));
+  }
+
+  async getVariantsByProductPaginated(productId: string, page: number, pageSize: number): Promise<{ variants: ProductVariant[]; total: number }> {
+    const [{ value: total }] = await db
+      .select({ value: count() })
+      .from(productVariants)
+      .where(eq(productVariants.productId, productId));
+    const offset = (page - 1) * pageSize;
+    const rows = await db
+      .select()
+      .from(productVariants)
+      .where(eq(productVariants.productId, productId))
+      .orderBy(desc(productVariants.createdAt))
+      .limit(pageSize)
+      .offset(offset);
+    return { variants: rows, total };
   }
 
   // Product Group operations

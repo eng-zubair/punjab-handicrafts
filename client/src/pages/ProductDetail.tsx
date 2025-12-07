@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { AlertCircle, ShoppingCart, Store, MapPin, Award, Minus, Plus, ArrowLeft, Star } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { Product, Variant } from "@shared/schema";
 import { addToCart } from "@/lib/cart";
 import { useToast } from "@/hooks/use-toast";
@@ -78,6 +78,24 @@ export default function ProductDetail() {
   const { data: reviewData, isLoading: reviewsLoading, isError: reviewsError, error: reviewsErrorData, refetch: refetchReviews } = useQuery<{ reviews: any[]; stats: { count: number; average: number } }>({
     queryKey: [`/api/products/${id}/reviews`, { sort }],
     enabled: !!id,
+  });
+
+  // Compute variant SKUs from product variants for promo fetching
+  const variantSkus = useMemo(() => {
+    try {
+      const vs = product?.variants
+        ? (typeof product.variants === 'string' ? JSON.parse(product.variants) : product.variants)
+        : [];
+      return Array.isArray(vs) ? vs.map((v: any) => String(v?.sku || '')).filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  }, [product]);
+
+  // Always call hooks at top-level; enable when SKUs available
+  const { data: variantPromos = [] } = useQuery<Array<{ targetId: string; type: string; value: string; endAt: string | null }>>({
+    queryKey: ["/api/promotions/active-by-variants", { skus: variantSkus.join(',') }],
+    enabled: variantSkus.length > 0,
   });
 
   const handleQuantityChange = (delta: number) => {
@@ -235,7 +253,33 @@ export default function ProductDetail() {
   let tone: "primary" | "destructive" | "success" | "secondary" | "warning" | undefined = undefined;
   let endsAt: string | null | undefined = promo?.endAt || undefined;
   
-  if (promo && !selectedVariant) { // Only apply main product promo if no variant selected (or should variants also get promo? assume no for now or complicate things)
+  if (selectedVariant) {
+    const vp = variantPromos.find((p: any) => p.targetId === selectedVariant.sku);
+    if (vp) {
+      if (vp.type === 'percentage') {
+        const pct = parseFloat(vp.value);
+        discounted = Math.max(0, priceNum * (100 - pct) / 100);
+        percent = pct;
+        tone = "warning";
+        endsAt = vp.endAt || undefined;
+      } else if (vp.type === 'fixed') {
+        const val = parseFloat(vp.value);
+        discounted = Math.max(0, priceNum - val);
+        percent = Math.max(0, Math.round((val / Math.max(priceNum, 1)) * 100));
+        tone = "success";
+        endsAt = vp.endAt || undefined;
+      } else if (vp.type === 'override' || vp.type === 'fixed_override') {
+        const val = parseFloat(vp.value);
+        discounted = Math.max(0, val);
+        percent = undefined;
+        tone = "primary";
+        endsAt = vp.endAt || undefined;
+      }
+    } else {
+      discounted = undefined;
+      percent = undefined;
+    }
+  } else if (promo) {
     // For now, let's assume promos apply to base price, but if variant overrides price, promo logic might need adjustment.
     // If variant is selected, let's disable promo calculation unless we know promo applies to variants too.
     // Simpler: If variant is selected, use variant price. If not, use promo price.
@@ -252,10 +296,6 @@ export default function ProductDetail() {
     } else {
       tone = "primary";
     }
-  } else if (selectedVariant) {
-    // If variant selected, reset discount (unless we want to apply generic discount to variants too)
-    discounted = undefined;
-    percent = undefined;
   }
 
   return (
@@ -363,7 +403,7 @@ export default function ProductDetail() {
             {discounted != null ? (
               <div className="flex items-baseline gap-2">
                 <Badge className="bg-red-600 text-white">SALE</Badge>
-                <p className="text-3xl font-bold text-primary" data-testid="text-price">
+                <p className="text-3xl font-bold text-primary" data-testid="text-price" aria-live="polite">
                   {formatPrice(discounted)}
                 </p>
                 <p className="text-lg line-through text-muted-foreground" data-testid="text-original-price-detail">
@@ -371,11 +411,11 @@ export default function ProductDetail() {
                 </p>
               </div>
             ) : (
-              <p className="text-3xl font-bold text-primary" data-testid="text-price">
+              <p className="text-3xl font-bold text-primary" data-testid="text-price" aria-live="polite">
                 {formatPrice(priceNum)}
               </p>
             )}
-            <p className="text-sm text-muted-foreground mt-1" data-testid="text-stock">
+            <p className="text-sm text-muted-foreground mt-1" data-testid="text-stock" aria-live="polite">
               {isOutOfStock ? 'Currently unavailable' : `${selectedVariant ? selectedVariant.stock : product.stock} in stock`}
             </p>
           </div>
@@ -390,7 +430,7 @@ export default function ProductDetail() {
           )}
 
           {parsedVariants.length > 0 && (
-            <div>
+            <div role="radiogroup" aria-label="Variant selection">
               <h3 className="font-semibold mb-2">Variants</h3>
               <div className="flex flex-wrap gap-2">
                 {parsedVariants.map((v, idx) => (
@@ -403,6 +443,8 @@ export default function ProductDetail() {
                         ? "bg-primary text-primary-foreground border-primary"
                         : "bg-background hover:bg-accent hover:text-accent-foreground"
                     )}
+                    role="radio"
+                    aria-checked={selectedVariant?.sku === v.sku}
                     data-testid={`btn-variant-${v.sku}`}
                   >
                     {v.type}: {v.option}
@@ -440,7 +482,7 @@ export default function ProductDetail() {
                   variant="outline"
                   size="icon"
                   onClick={() => handleQuantityChange(1)}
-                  disabled={quantity >= product.stock}
+                  disabled={quantity >= (selectedVariant ? selectedVariant.stock : product.stock)}
                   data-testid="button-increase-quantity"
                   aria-label="Increase quantity"
                 >
