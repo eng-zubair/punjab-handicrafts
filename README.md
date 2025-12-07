@@ -1,3 +1,4 @@
+[README.md](https://github.com/user-attachments/files/24014608/README.md)
 # Punjab Handicrafts v2
 
 An end-to-end marketplace platform for Punjab’s handicrafts. The project provides a full-stack web application enabling buyers to browse and purchase products, vendors to manage stores and fulfill orders, and admins to oversee platform operations. It includes robust order management with Cash on Delivery (COD) support, vendor dashboards, analytics, reviews, promotions, and secure authentication.
