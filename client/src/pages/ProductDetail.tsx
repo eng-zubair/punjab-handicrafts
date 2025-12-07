@@ -65,6 +65,10 @@ export default function ProductDetail() {
     }
   }, [product]);
 
+  useEffect(() => {
+    setSelectedImage(0);
+  }, [selectedVariant]);
+
   const { data: activePromotions = [] } = useQuery<Array<{ productId: string; promotionId: string; type: string; value: string; endAt: string | null }>>({
     queryKey: [`/api/promotions/active-by-products`, { ids: id }],
     enabled: !!id,
@@ -245,7 +249,11 @@ export default function ProductDetail() {
   }
 
   const isOutOfStock = selectedVariant ? selectedVariant.stock === 0 : product.stock === 0;
-  const images = normalizeImagePaths(product.images);
+  const images = normalizeImagePaths(
+    selectedVariant?.images && selectedVariant.images.length > 0
+      ? selectedVariant.images
+      : product.images
+  );
   const priceNum = selectedVariant ? Number(selectedVariant.price) : Number(product.price);
   const promo = (activePromotions || []).find(p => p.productId === product.id);
   let discounted: number | undefined = undefined;
@@ -418,6 +426,13 @@ export default function ProductDetail() {
             <p className="text-sm text-muted-foreground mt-1" data-testid="text-stock" aria-live="polite">
               {isOutOfStock ? 'Currently unavailable' : `${selectedVariant ? selectedVariant.stock : product.stock} in stock`}
             </p>
+            {selectedVariant && (
+              <div className="mt-2 text-sm text-muted-foreground" data-testid="text-selected-variant-info">
+                <span className="mr-3">Type: {selectedVariant.type}</span>
+                <span className="mr-3">Option: {selectedVariant.option}</span>
+                <span>Price: {formatPrice(Number(selectedVariant.price))}</span>
+              </div>
+            )}
           </div>
 
           {product.description && (
@@ -456,6 +471,44 @@ export default function ProductDetail() {
                    SKU: {selectedVariant.sku} | Stock: {selectedVariant.stock}
                  </p>
               )}
+            </div>
+          )}
+
+          {parsedVariants.length > 0 && (
+            <div className="mt-6">
+              <h3 className="font-semibold mb-3">All Variants</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {parsedVariants.map((v) => {
+                  const vImages = normalizeImagePaths(v.images || []);
+                  const thumb = vImages[0] || images[0] || '';
+                  return (
+                    <div key={v.sku} className="border rounded-lg p-3 flex gap-3 items-center">
+                      <div className="w-20 h-20 rounded overflow-hidden bg-muted">
+                        {thumb ? (
+                          <img src={thumb} alt={v.name || `${v.type} ${v.option}`} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full" />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-medium" data-testid={`text-variant-name-${v.sku}`}>{v.name || `${v.type} ${v.option}`}</div>
+                        <div className="text-sm text-muted-foreground">
+                          <span className="mr-2">Type: {v.type}</span>
+                          <span className="mr-2">Option: {v.option}</span>
+                          <span>Stock: {v.stock}</span>
+                        </div>
+                        <div className="mt-1 text-sm" data-testid={`text-variant-price-${v.sku}`}>{formatPrice(Number(v.price))}</div>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => { setSelectedVariant(v); setSelectedImage(0); }}
+                        data-testid={`btn-select-variant-${v.sku}`}
+                      >Select</Button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 

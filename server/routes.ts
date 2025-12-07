@@ -976,9 +976,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const variants = vRows.map((v: any) => ({
         type: String(v.attributes?.type || ''),
         option: String(v.attributes?.option || ''),
+        name: v.name != null ? String(v.name) : `${String(v.attributes?.type || '')} ${String(v.attributes?.option || '')}`.trim(),
         sku: String(v.sku),
         price: parseFloat(String(v.price)),
         stock: Number(v.stock || 0),
+        barcode: v.barcode != null ? String(v.barcode) : undefined,
+        weightKg: v.weightKg != null ? parseFloat(String(v.weightKg)) : undefined,
+        lengthCm: v.lengthCm != null ? parseFloat(String(v.lengthCm)) : undefined,
+        widthCm: v.widthCm != null ? parseFloat(String(v.widthCm)) : undefined,
+        heightCm: v.heightCm != null ? parseFloat(String(v.heightCm)) : undefined,
+        images: Array.isArray(v.images) ? v.images : [],
       }));
       res.json({ ...serializeProduct(product), variants, variantsPagination: { page: Math.max(1, vPage), pageSize: Math.max(1, vSize), total: vTotal, totalPages: Math.ceil(vTotal / Math.max(1, vSize)) } });
     } catch (error) {

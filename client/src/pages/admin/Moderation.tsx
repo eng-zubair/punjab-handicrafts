@@ -4,12 +4,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, X, Store, Package, FileText, MessageSquare } from "lucide-react";
+import { Check, X, Store, Package, FileText, MessageSquare, Eye } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeImagePath } from "@/lib/utils/image";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 interface PendingStore {
   id: string;
@@ -47,6 +48,8 @@ export default function AdminModeration() {
   const { toast } = useToast();
   const [docsOpen, setDocsOpen] = useState(false);
   const [docsStoreId, setDocsStoreId] = useState<string | null>(null);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewProductId, setViewProductId] = useState<string | null>(null);
   const { data: docs = [] } = useQuery<{ name: string; url: string }[]>({
     queryKey: ['/api/admin/verification/docs', docsStoreId || ''],
     enabled: !!docsStoreId && docsOpen,
@@ -68,6 +71,21 @@ export default function AdminModeration() {
     refetchOnMount: true,
     staleTime: 0,
   });
+
+  const { data: viewProduct, isLoading: viewLoading } = useQuery<any>({
+    queryKey: viewProductId ? [`/api/products/${viewProductId}`] : [''],
+    enabled: !!viewProductId && viewOpen,
+  });
+
+  const viewVariants = useMemo(() => {
+    try {
+      const v = viewProduct?.variants;
+      if (!v) return [] as any[];
+      return Array.isArray(v) ? v : JSON.parse(v);
+    } catch {
+      return [] as any[];
+    }
+  }, [viewProduct]);
 
   const updateStoreMutation = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
@@ -312,6 +330,15 @@ export default function AdminModeration() {
                       <div className="flex gap-2 pt-2">
                         <Button
                           size="sm"
+                          variant="secondary"
+                          onClick={() => { setViewProductId(product.id); setViewOpen(true); }}
+                          data-testid={`button-view-product-${product.id}`}
+                        >
+                          <Eye className="w-4 h-4 mr-2" />
+                          View
+                        </Button>
+                        <Button
+                          size="sm"
                           variant="default"
                           onClick={() => updateProductMutation.mutate({ id: product.id, status: 'approved' })}
                           disabled={updateProductMutation.isPending}
@@ -384,6 +411,101 @@ export default function AdminModeration() {
                 ))
               )}
             </div>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={viewOpen} onOpenChange={setViewOpen}>
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle>Product Details</DialogTitle>
+            </DialogHeader>
+            {!viewProduct || viewLoading ? (
+              <p className="text-muted-foreground">Loading...</p>
+            ) : (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-3">
+                    {Array.isArray(viewProduct.images) && viewProduct.images.length > 0 ? (
+                      <div className="flex gap-2 overflow-x-auto">
+                        {viewProduct.images.slice(0, 4).map((img: string, idx: number) => (
+                          <img
+                            key={idx}
+                            src={normalizeImagePath(img)}
+                            alt={`${viewProduct.title} ${idx + 1}`}
+                            className="w-24 h-24 object-cover rounded-md border"
+                            data-testid={`img-view-product-${idx}`}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground">No images</p>
+                    )}
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex gap-2"><span className="text-muted-foreground min-w-24">Title:</span><span className="font-medium">{viewProduct.title}</span></div>
+                    <div className="flex gap-2"><span className="text-muted-foreground min-w-24">Price:</span><span className="font-medium">PKR {parseFloat(String(viewProduct.price)).toLocaleString()}</span></div>
+                    <div className="flex gap-2"><span className="text-muted-foreground min-w-24">Stock:</span><span>{viewProduct.stock}</span></div>
+                    <div className="flex gap-2"><span className="text-muted-foreground min-w-24">District:</span><span>{viewProduct.district}</span></div>
+                    <div className="flex gap-2"><span className="text-muted-foreground min-w-24">GI Brand:</span><span>{viewProduct.giBrand}</span></div>
+                    {viewProduct.category && (
+                      <div className="flex gap-2"><span className="text-muted-foreground min-w-24">Category:</span><span>{viewProduct.category}</span></div>
+                    )}
+                    {viewProduct.description && (
+                      <div className="mt-2">
+                        <span className="text-muted-foreground block">Description:</span>
+                        <p className="mt-1">{viewProduct.description}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <h3 className="font-semibold mb-2">Variants</h3>
+                  {viewVariants.length === 0 ? (
+                    <p className="text-muted-foreground" data-testid="text-no-variants">No variants</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Type</TableHead>
+                          <TableHead>Option</TableHead>
+                          <TableHead>SKU</TableHead>
+                          <TableHead>Price</TableHead>
+                          <TableHead>Stock</TableHead>
+                          <TableHead>Barcode</TableHead>
+                          <TableHead>Weight (kg)</TableHead>
+                          <TableHead>Dimensions (cm)</TableHead>
+                          <TableHead>Images</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {viewVariants.map((v: any, idx: number) => (
+                          <TableRow key={idx} data-testid={`row-variant-${v.sku || idx}`}>
+                            <TableCell>{v.type}</TableCell>
+                            <TableCell>{v.option}</TableCell>
+                            <TableCell className="font-mono">{v.sku}</TableCell>
+                            <TableCell>{Number(v.price).toLocaleString()}</TableCell>
+                            <TableCell>{Number(v.stock)}</TableCell>
+                            <TableCell>{v.barcode || ''}</TableCell>
+                            <TableCell>{v.weightKg != null ? Number(v.weightKg) : ''}</TableCell>
+                            <TableCell>{v.lengthCm != null && v.widthCm != null && v.heightCm != null ? `${v.lengthCm}×${v.widthCm}×${v.heightCm}` : ''}</TableCell>
+                            <TableCell>
+                              {Array.isArray(v.images) && v.images.length > 0 ? (
+                                <div className="flex gap-1">
+                                  {v.images.slice(0, 3).map((img: string, i: number) => (
+                                    <img key={i} src={normalizeImagePath(img)} alt={`variant ${i + 1}`} className="w-10 h-10 rounded border" />
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </div>
+              </div>
+            )}
           </DialogContent>
         </Dialog>
       </div>
