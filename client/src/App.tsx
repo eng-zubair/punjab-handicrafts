@@ -33,6 +33,11 @@ import Store from "@/pages/Store";
 import PrivacyPolicy from "@/pages/PrivacyPolicy";
 import Returns from "@/pages/Returns";
 import Terms from "@/pages/Terms";
+import TrainingHome from "@/pages/training/Home";
+import TrainingPrograms from "@/pages/training/Programs";
+import TrainingApply from "@/pages/training/Apply";
+import TrainingDashboard from "@/pages/training/Dashboard";
+import AdminTraining from "@/pages/admin/Training";
 
 function Router() {
   return (
@@ -52,6 +57,10 @@ function Router() {
       <Route path="/returns" component={Returns} />
       <Route path="/terms" component={Terms} />
       <Route path="/buyer/dashboard" component={BuyerDashboard} />
+      <Route path="/training" component={TrainingHome} />
+      <Route path="/training/programs" component={TrainingPrograms} />
+      <Route path="/training/apply" component={TrainingApply} />
+      <Route path="/training/dashboard" component={TrainingDashboard} />
       <Route path="/vendor/register" component={VendorRegister} />
       <Route path="/vendor/dashboard" component={VendorOverview} />
       <Route path="/vendor/products" component={VendorProducts} />
@@ -64,6 +73,7 @@ function Router() {
       <Route path="/admin/analytics" component={AdminAnalytics} />
       <Route path="/admin/stores" component={AdminStores} />
       <Route path="/admin/categories" component={AdminCategories} />
+      <Route path="/admin/training" component={AdminTraining} />
       <Route path="/admin/settings" component={AdminSettings} />
       <Route component={NotFound} />
     </Switch>

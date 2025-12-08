@@ -103,3 +103,74 @@ export async function initializeOrderSchema() {
     log(`✗ Error verifying orders schema: ${error}`);
   }
 }
+
+export async function initializeTrainingSchema() {
+  try {
+    const statements = [
+      `CREATE TABLE IF NOT EXISTS training_centers (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        name text NOT NULL,
+        description text,
+        district text NOT NULL,
+        address text,
+        contact_phone varchar,
+        contact_email varchar,
+        capacity integer NOT NULL DEFAULT 0,
+        created_at timestamp NOT NULL DEFAULT now()
+      )`,
+      `CREATE TABLE IF NOT EXISTS training_programs (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        center_id varchar NOT NULL REFERENCES training_centers(id),
+        title text NOT NULL,
+        description text,
+        duration_weeks integer NOT NULL DEFAULT 0,
+        schedule text,
+        required_materials jsonb,
+        certification_details text,
+        status text NOT NULL DEFAULT 'active',
+        created_at timestamp NOT NULL DEFAULT now()
+      )`,
+      `CREATE TABLE IF NOT EXISTS trainee_applications (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id varchar NOT NULL REFERENCES users(id),
+        program_id varchar NOT NULL REFERENCES training_programs(id),
+        status text NOT NULL DEFAULT 'applied',
+        motivation text,
+        experience text,
+        created_at timestamp NOT NULL DEFAULT now(),
+        accepted_at timestamp,
+        enrolled_at timestamp,
+        completed_at timestamp
+      )`,
+      `CREATE TABLE IF NOT EXISTS trainee_progress (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        application_id varchar NOT NULL REFERENCES trainee_applications(id) ON DELETE CASCADE,
+        milestones jsonb,
+        completion_percent integer NOT NULL DEFAULT 0,
+        attendance_percent integer NOT NULL DEFAULT 0,
+        grade text,
+        updated_at timestamp NOT NULL DEFAULT now()
+      )`,
+      `CREATE TABLE IF NOT EXISTS artisan_work (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        worker_id varchar NOT NULL REFERENCES users(id),
+        center_id varchar REFERENCES training_centers(id),
+        program_id varchar REFERENCES training_programs(id),
+        title text NOT NULL,
+        description text,
+        amount numeric(10,2) NOT NULL,
+        status text NOT NULL DEFAULT 'pending',
+        payout_id varchar REFERENCES payouts(id),
+        assigned_at timestamp NOT NULL DEFAULT now(),
+        completed_at timestamp,
+        approved_at timestamp
+      )`
+    ];
+    for (const s of statements) {
+      await pool.query(s);
+    }
+    log(`✓ Training schema verified`);
+  } catch (error) {
+    log(`✗ Error verifying training schema: ${error}`);
+  }
+}

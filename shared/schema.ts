@@ -563,3 +563,83 @@ export const configAudits = pgTable("config_audits", {
   changedBy: varchar("changed_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const trainingCenters = pgTable("training_centers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  district: text("district").notNull(),
+  address: text("address"),
+  contactPhone: varchar("contact_phone"),
+  contactEmail: varchar("contact_email"),
+  capacity: integer("capacity").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const trainingPrograms = pgTable("training_programs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  centerId: varchar("center_id").notNull().references(() => trainingCenters.id),
+  title: text("title").notNull(),
+  description: text("description"),
+  durationWeeks: integer("duration_weeks").notNull().default(0),
+  schedule: text("schedule"),
+  requiredMaterials: jsonb("required_materials"),
+  certificationDetails: text("certification_details"),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const traineeApplications = pgTable("trainee_applications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  programId: varchar("program_id").notNull().references(() => trainingPrograms.id),
+  status: text("status").notNull().default("applied"),
+  motivation: text("motivation"),
+  experience: text("experience"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  acceptedAt: timestamp("accepted_at"),
+  enrolledAt: timestamp("enrolled_at"),
+  completedAt: timestamp("completed_at"),
+});
+
+export const traineeProgress = pgTable("trainee_progress", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  applicationId: varchar("application_id").notNull().references(() => traineeApplications.id, { onDelete: "cascade" }),
+  milestones: jsonb("milestones"),
+  completionPercent: integer("completion_percent").notNull().default(0),
+  attendancePercent: integer("attendance_percent").notNull().default(0),
+  grade: text("grade"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const artisanWork = pgTable("artisan_work", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  workerId: varchar("worker_id").notNull().references(() => users.id),
+  centerId: varchar("center_id").references(() => trainingCenters.id),
+  programId: varchar("program_id").references(() => trainingPrograms.id),
+  title: text("title").notNull(),
+  description: text("description"),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  status: text("status").notNull().default("pending"),
+  payoutId: varchar("payout_id").references(() => payouts.id),
+  assignedAt: timestamp("assigned_at").defaultNow().notNull(),
+  completedAt: timestamp("completed_at"),
+  approvedAt: timestamp("approved_at"),
+});
+
+export const insertTrainingCenterSchema = createInsertSchema(trainingCenters).omit({ id: true, createdAt: true });
+export const insertTrainingProgramSchema = createInsertSchema(trainingPrograms).omit({ id: true, createdAt: true });
+export const insertTraineeApplicationSchema = createInsertSchema(traineeApplications).omit({ id: true, createdAt: true, acceptedAt: true, enrolledAt: true, completedAt: true });
+export const insertTraineeProgressSchema = createInsertSchema(traineeProgress).omit({ id: true, updatedAt: true });
+export const insertArtisanWorkSchema = createInsertSchema(artisanWork).omit({ id: true, assignedAt: true, completedAt: true, approvedAt: true, payoutId: true });
+
+export type InsertTrainingCenter = z.infer<typeof insertTrainingCenterSchema>;
+export type TrainingCenter = typeof trainingCenters.$inferSelect;
+export type InsertTrainingProgram = z.infer<typeof insertTrainingProgramSchema>;
+export type TrainingProgram = typeof trainingPrograms.$inferSelect;
+export type InsertTraineeApplication = z.infer<typeof insertTraineeApplicationSchema>;
+export type TraineeApplication = typeof traineeApplications.$inferSelect;
+export type InsertTraineeProgress = z.infer<typeof insertTraineeProgressSchema>;
+export type TraineeProgress = typeof traineeProgress.$inferSelect;
+export type InsertArtisanWork = z.infer<typeof insertArtisanWorkSchema>;
+export type ArtisanWork = typeof artisanWork.$inferSelect;

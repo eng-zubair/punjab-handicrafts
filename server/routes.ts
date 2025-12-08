@@ -3,7 +3,7 @@ import express from "express";
 import { createServer, type Server } from "http";
 import passport from "passport";
 import { storage } from "./storage";
-import { reviews, users, promotionProductHistory, promotionProducts, promotions, taxRules, shippingRateRules, platformSettings, configAudits, productVariants } from "@shared/schema";
+import { reviews, users, promotionProductHistory, promotionProducts, promotions, taxRules, shippingRateRules, platformSettings, configAudits, productVariants, artisanWork } from "@shared/schema";
 import { db, pool } from "./db";
 import { sql, and, eq, inArray, desc } from "drizzle-orm";
 import { setupAuth, isAuthenticated, hashPassword } from "./auth";
@@ -23,6 +23,10 @@ import {
   insertPayoutSchema,
   insertProductGroupSchema,
   insertPromotionSchema,
+  insertTrainingCenterSchema,
+  insertTrainingProgramSchema,
+  insertTraineeApplicationSchema,
+  insertTraineeProgressSchema,
   variantSchema,
   registerSchema,
   loginSchema,
@@ -3910,6 +3914,187 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching payouts:", error);
       res.status(500).json({ message: "Failed to fetch payouts" });
+    }
+  });
+
+  app.get('/api/training/centers', async (_req, res) => {
+    try {
+      const centers = await storage.getTrainingCenters();
+      res.json(centers);
+    } catch {
+      res.status(500).json({ message: 'Failed to fetch centers' });
+    }
+  });
+
+  app.post('/api/admin/training/centers', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const payload = insertTrainingCenterSchema.parse(req.body);
+      const center = await storage.createTrainingCenter(payload);
+      res.status(201).json(center);
+    } catch (error: any) {
+      const msg = (error && error.message) || 'Failed to create center';
+      res.status(500).json({ message: msg });
+    }
+  });
+
+  app.put('/api/admin/training/centers/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const updates = insertTrainingCenterSchema.partial().parse(req.body);
+      const updated = await storage.updateTrainingCenter(req.params.id, updates);
+      if (!updated) return res.status(404).json({ message: 'Center not found' });
+      res.json(updated);
+    } catch (error: any) {
+      const msg = (error && error.message) || 'Failed to update center';
+      res.status(500).json({ message: msg });
+    }
+  });
+
+  app.get('/api/training/programs', async (_req, res) => {
+    try {
+      const programs = await storage.getTrainingPrograms();
+      res.json(programs);
+    } catch {
+      res.status(500).json({ message: 'Failed to fetch programs' });
+    }
+  });
+
+  app.post('/api/admin/training/programs', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const payload = insertTrainingProgramSchema.parse(req.body);
+      const program = await storage.createTrainingProgram(payload);
+      res.status(201).json(program);
+    } catch (error: any) {
+      const msg = (error && error.message) || 'Failed to create program';
+      res.status(500).json({ message: msg });
+    }
+  });
+
+  app.put('/api/admin/training/programs/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const updates = insertTrainingProgramSchema.partial().parse(req.body);
+      const updated = await storage.updateTrainingProgram(req.params.id, updates);
+      if (!updated) return res.status(404).json({ message: 'Program not found' });
+      res.json(updated);
+    } catch (error: any) {
+      const msg = (error && error.message) || 'Failed to update program';
+      res.status(500).json({ message: msg });
+    }
+  });
+
+  app.get('/api/training/applications/me', isAuthenticated, async (req: any, res) => {
+    try {
+      const list = await storage.getTraineeApplicationsByUser(req.userId);
+      res.json(list);
+    } catch {
+      res.status(500).json({ message: 'Failed to fetch applications' });
+    }
+  });
+
+  app.post('/api/training/applications', isAuthenticated, async (req: any, res) => {
+    try {
+      const payload = insertTraineeApplicationSchema.parse({ ...req.body, userId: req.userId });
+      const created = await storage.createTraineeApplication(payload);
+      res.status(201).json(created);
+    } catch (error: any) {
+      const msg = (error && error.message) || 'Failed to apply';
+      res.status(500).json({ message: msg });
+    }
+  });
+
+  app.get('/api/admin/training/applications', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const programId = String(req.query.programId || '');
+      const list = programId ? await storage.getTraineeApplicationsByProgram(programId) : [];
+      res.json(list);
+    } catch {
+      res.status(500).json({ message: 'Failed to fetch applications' });
+    }
+  });
+
+  app.put('/api/admin/training/applications/:id/status', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const status = String((req.body || {}).status || '');
+      if (!status) return res.status(400).json({ message: 'status required' });
+      const timestamps: any = {};
+      if (status === 'accepted') timestamps.acceptedAt = new Date();
+      if (status === 'enrolled') timestamps.enrolledAt = new Date();
+      if (status === 'completed') timestamps.completedAt = new Date();
+      const updated = await storage.updateTraineeApplicationStatus(req.params.id, status, timestamps);
+      if (!updated) return res.status(404).json({ message: 'Application not found' });
+      res.json(updated);
+    } catch {
+      res.status(500).json({ message: 'Failed to update status' });
+    }
+  });
+
+  app.get('/api/training/progress/:applicationId', isAuthenticated, async (req: any, res) => {
+    try {
+      const appId = req.params.applicationId;
+      const apps = await storage.getTraineeApplicationsByUser(req.userId);
+      const owns = apps.some(a => a.id === appId);
+      if (!owns) return res.status(403).json({ message: 'Not authorized' });
+      const prog = await storage.getTraineeProgressByApplication(appId);
+      res.json(prog || null);
+    } catch {
+      res.status(500).json({ message: 'Failed to fetch progress' });
+    }
+  });
+
+  app.put('/api/admin/training/progress/:applicationId', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const appId = req.params.applicationId;
+      const data = insertTraineeProgressSchema.parse({ ...req.body, applicationId: appId });
+      const updated = await storage.upsertTraineeProgress(appId, { milestones: data.milestones, completionPercent: data.completionPercent, attendancePercent: data.attendancePercent, grade: data.grade });
+      res.json(updated);
+    } catch (error: any) {
+      const msg = (error && error.message) || 'Failed to update progress';
+      res.status(500).json({ message: msg });
+    }
+  });
+
+  app.get('/api/training/work/me', isAuthenticated, async (req: any, res) => {
+    try {
+      const list = await storage.getArtisanWorkByUser(req.userId);
+      res.json(list);
+    } catch {
+      res.status(500).json({ message: 'Failed to fetch work' });
+    }
+  });
+
+  app.get('/api/admin/training/work', isAuthenticated, isAdmin, async (_req, res) => {
+    try {
+      const rows = await db.select().from(artisanWork).orderBy(desc(artisanWork.assignedAt));
+      res.json(rows);
+    } catch {
+      res.status(500).json({ message: 'Failed to fetch work' });
+    }
+  });
+
+  app.put('/api/training/work/:id/complete', isAuthenticated, async (req: any, res) => {
+    try {
+      const workId = req.params.id;
+      const myWork = await storage.getArtisanWorkByUser(req.userId);
+      const target = myWork.find(w => w.id === workId);
+      if (!target) return res.status(403).json({ message: 'Not authorized' });
+      const updated = await storage.updateArtisanWorkStatus(workId, 'completed', { completedAt: new Date() as any });
+      res.json(updated);
+    } catch {
+      res.status(500).json({ message: 'Failed to update work' });
+    }
+  });
+
+  app.put('/api/admin/training/work/:id/approve', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const workId = req.params.id;
+      const rows = await db.select().from(artisanWork).where(eq(artisanWork.id, workId));
+      const work = rows[0] as any;
+      if (!work) return res.status(404).json({ message: 'Work not found' });
+      const updated = await storage.updateArtisanWorkStatus(workId, 'approved', { approvedAt: new Date() as any });
+      const payout = await storage.createPayout({ vendorId: work.workerId, amount: work.amount, status: 'pending' } as any);
+      await storage.linkPayoutToArtisanWork(workId, payout.id);
+      res.json({ work: updated, payout });
+    } catch {
+      res.status(500).json({ message: 'Failed to approve work' });
     }
   });
 
