@@ -21,6 +21,7 @@ export default function Footer() {
             <p className="text-sm text-muted-foreground">
               Connecting Punjab's traditional artisans with the world through authentic GI-branded handicrafts.
             </p>
+            <img src={swdLogo} alt="Official Logo" className="h-20 w-auto" loading="lazy" decoding="async" />
           </div>
           
           <div>
@@ -37,7 +38,7 @@ export default function Footer() {
           </div>
           
           <div>
-            <h4 className="font-semibold mb-4">For Vendors</h4>
+            <h4 className="font-semibold mb-4">Artisans</h4>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li><Link href="/vendor/register" className="hover:text-foreground transition-colors">Create Store</Link></li>
               <li><Link href="/vendor/pricing" className="hover:text-foreground transition-colors">Pricing</Link></li>
@@ -64,7 +65,7 @@ export default function Footer() {
           <div className="flex items-center gap-6">
             <Link href="/privacy-policy" className="hover:text-foreground transition-colors">Privacy Policy</Link>
             <Link href="/terms" className="hover:text-foreground transition-colors">Terms of Service</Link>
-            <img src={swdLogo} alt="Official Logo" className="h-10 w-auto" loading="lazy" decoding="async" />
+            
           </div>
         </div>
       </div>
