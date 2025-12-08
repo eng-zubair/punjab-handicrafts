@@ -30,6 +30,9 @@ import Pricing from "@/pages/vendor/Pricing";
 import SellerGuide from "@/pages/vendor/SellerGuide";
 import Verification from "@/pages/vendor/Verification";
 import Store from "@/pages/Store";
+import PrivacyPolicy from "@/pages/PrivacyPolicy";
+import Returns from "@/pages/Returns";
+import Terms from "@/pages/Terms";
 
 function Router() {
   return (
@@ -45,6 +48,9 @@ function Router() {
       <Route path="/cart" component={Cart} />
       <Route path="/checkout" component={Checkout} />
       <Route path="/orders" component={Orders} />
+      <Route path="/privacy-policy" component={PrivacyPolicy} />
+      <Route path="/returns" component={Returns} />
+      <Route path="/terms" component={Terms} />
       <Route path="/buyer/dashboard" component={BuyerDashboard} />
       <Route path="/vendor/register" component={VendorRegister} />
       <Route path="/vendor/dashboard" component={VendorOverview} />

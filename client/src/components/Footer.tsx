@@ -1,4 +1,5 @@
 import { Separator } from "@/components/ui/separator";
+import swdLogo from "@assets/swd.png";
 import { useQuery } from "@tanstack/react-query";
 import type { Category } from "@shared/schema";
 import { Link } from "wouter";
@@ -50,7 +51,7 @@ export default function Footer() {
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li><a href="#" className="hover:text-foreground transition-colors">Help Center</a></li>
               <li><a href="#" className="hover:text-foreground transition-colors">Shipping Info</a></li>
-              <li><a href="#" className="hover:text-foreground transition-colors">Returns</a></li>
+              <li><Link href="/returns" className="hover:text-foreground transition-colors">Returns</Link></li>
               <li><a href="#" className="hover:text-foreground transition-colors">Contact Us</a></li>
             </ul>
           </div>
@@ -60,9 +61,10 @@ export default function Footer() {
         
         <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-muted-foreground">
           <p>© 2025 Sanatzar. All rights reserved.</p>
-          <div className="flex gap-6">
-            <a href="#" className="hover:text-foreground transition-colors">Privacy Policy</a>
-            <a href="#" className="hover:text-foreground transition-colors">Terms of Service</a>
+          <div className="flex items-center gap-6">
+            <Link href="/privacy-policy" className="hover:text-foreground transition-colors">Privacy Policy</Link>
+            <Link href="/terms" className="hover:text-foreground transition-colors">Terms of Service</Link>
+            <img src={swdLogo} alt="Official Logo" className="h-10 w-auto" loading="lazy" decoding="async" />
           </div>
         </div>
       </div>
