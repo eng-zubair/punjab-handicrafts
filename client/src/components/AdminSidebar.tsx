@@ -10,7 +10,7 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, ShieldCheck, Users, ShoppingCart, BarChart3, Store, Settings, LogOut, Tag } from "lucide-react";
+import { LayoutDashboard, ShieldCheck, Users, ShoppingCart, BarChart3, Store, Settings, LogOut, Tag, Palette, GraduationCap, Map, Building2 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -51,9 +51,29 @@ const menuItems = [
     icon: Tag,
   },
   {
+    title: "Districts",
+    url: "/admin/districts",
+    icon: Map,
+  },
+  {
+    title: "Centers",
+    url: "/admin/centers",
+    icon: Building2,
+  },
+  {
     title: "Settings",
     url: "/admin/settings",
     icon: Settings,
+  },
+  {
+    title: "Artisans",
+    url: "/admin/artisans",
+    icon: Palette,
+  },
+  {
+    title: "Training",
+    url: "/admin/training",
+    icon: GraduationCap,
   },
 ];
 

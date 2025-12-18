@@ -3,7 +3,7 @@ import express from "express";
 import { createServer, type Server } from "http";
 import passport from "passport";
 import { storage } from "./storage";
-import { reviews, users, promotionProductHistory, promotionProducts, promotions, taxRules, shippingRateRules, platformSettings, configAudits, productVariants } from "@shared/schema";
+import { reviews, users, promotionProductHistory, promotionProducts, promotions, promotionRules, promotionActions, taxRules, shippingRateRules, platformSettings, configAudits, productVariants, sanatzarCenters, trainingPrograms, trainingApplications, registeredArtisans, surveyQuestions, categories } from "@shared/schema";
 import { db, pool } from "./db";
 import { sql, and, eq, inArray, desc } from "drizzle-orm";
 import { setupAuth, isAuthenticated, hashPassword } from "./auth";
@@ -23,11 +23,14 @@ import {
   insertPayoutSchema,
   insertProductGroupSchema,
   insertPromotionSchema,
+  insertPromotionRuleSchema,
+  insertPromotionActionSchema,
   variantSchema,
   registerSchema,
   loginSchema,
   type User,
 } from "@shared/schema";
+import { promotionEngine } from "./services/promotion";
 
 // Helper function to remove sensitive fields from user objects
 function sanitizeUser(user: User) {
@@ -79,6 +82,42 @@ const isAdmin: RequestHandler = async (req: any, res, next) => {
   }
 };
 
+const isTrainee: RequestHandler = async (req: any, res, next) => {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    const user = await storage.getUser(userId);
+    if (!user || user.role !== "trainee") {
+      return res.status(403).json({ message: "Trainee access required" });
+    }
+    req.userRole = user.role;
+    next();
+  } catch (error) {
+    console.error("Error in isTrainee middleware:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+const isArtisan: RequestHandler = async (req: any, res, next) => {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    const user = await storage.getUser(userId);
+    if (!user || user.role !== "artisan") {
+      return res.status(403).json({ message: "Artisan access required" });
+    }
+    req.userRole = user.role;
+    next();
+  } catch (error) {
+    console.error("Error in isArtisan middleware:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
 // Configure multer for secure file uploads
 const uploadStorage = multer.diskStorage({
   destination: async (req: any, file, cb) => {
@@ -88,7 +127,7 @@ const uploadStorage = multer.diskStorage({
       if (!storeId) {
         return cb(new Error("Store ID is required"), "");
       }
-      
+
       // Create directory if it doesn't exist
       const uploadDir = path.join(process.cwd(), "uploads", "product-images", storeId);
       await fs.mkdir(uploadDir, { recursive: true });
@@ -112,9 +151,9 @@ const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCa
   // Only allow specific image MIME types
   const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
   const allowedExts = ['.jpg', '.jpeg', '.png', '.webp'];
-  
+
   const ext = path.extname(file.originalname).toLowerCase();
-  
+
   if (allowedMimes.includes(file.mimetype) && allowedExts.includes(ext)) {
     cb(null, true);
   } else {
@@ -178,8 +217,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   console.log('Registering routes...');
   try {
     await ensureVariantSchema();
-  } catch {}
-  
+  } catch { }
+
   app.get('/api/ping-test', (req, res) => {
     console.log('Ping test hit');
     res.send('pong');
@@ -314,7 +353,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (rows.length === 0) {
           await db.insert(platformSettings).values({ id: 'default', taxEnabled: true, shippingEnabled: true });
         }
-      } catch {}
+      } catch { }
     } catch (e) {
       console.error('ensureTaxShipSchema error:', e);
     }
@@ -361,7 +400,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return undefined;
   }
 
-  
+
 
   async function computeShipping(items: Array<{ productId: string; quantity: number; price: string; weightKg?: number; lengthCm?: number; widthCm?: number; heightCm?: number }>, province: string | undefined, shippingMethod?: string): Promise<{ amount: number; breakdown: Array<{ productId: string; weightKg: number }>; carrier: string }> {
     const settingsRows = await db.select().from(platformSettings);
@@ -433,7 +472,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const lastOrder = orders[0];
         // Also fetch user email/phone if not in order, but order usually has it
         const user = await storage.getUser(userId);
-        
+
         res.json({
           recipientName: lastOrder.recipientName || (user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : ''),
           recipientEmail: lastOrder.recipientEmail || user?.email || '',
@@ -468,7 +507,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // Get storeId from query string (required before multer parsing)
       const storeId = req.query.storeId;
-      
+
       if (!storeId) {
         return res.status(400).json({ message: "Store ID is required in query string" });
       }
@@ -521,7 +560,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/auth/register', async (req, res) => {
     try {
       const validatedData = registerSchema.parse(req.body);
-      
+
       // Check if email already exists
       const existingUser = await storage.getUserByEmail(validatedData.email);
       if (existingUser) {
@@ -545,7 +584,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.error("Error logging in after registration:", err);
           return res.status(500).json({ message: "Registration successful, but login failed" });
         }
-        
+
         // Return user without sensitive fields
         res.status(201).json(sanitizeUser(user));
       });
@@ -562,19 +601,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // Validate request body first
       const validatedData = loginSchema.parse(req.body);
-      
+
       // Replace request body with validated data to prevent injection
       req.body = validatedData;
-      
+
       passport.authenticate('local', (err: any, user: any, info: any) => {
         if (err) {
           console.error("Error during login:", err);
-          try { log(`auth_login_error email=${(req.body as any)?.email}`); } catch {}
+          try { log(`auth_login_error email=${(req.body as any)?.email}`); } catch { }
           return res.status(500).json({ message: "Login failed" });
         }
-        
+
         if (!user) {
-          try { log(`auth_login_failed email=${(req.body as any)?.email}`); } catch {}
+          try { log(`auth_login_failed email=${(req.body as any)?.email}`); } catch { }
           return res.status(401).json({ message: info?.message || "Invalid credentials" });
         }
 
@@ -591,10 +630,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           try {
             await storage.updateUserLastLogin(fullUser.id, new Date());
-          } catch {}
+          } catch { }
 
           // Return user without sensitive fields
-          try { log(`auth_login_success userId=${fullUser.id} role=${fullUser.role}`); } catch {}
+          try { log(`auth_login_success userId=${fullUser.id} role=${fullUser.role}`); } catch { }
           res.json(sanitizeUser(fullUser));
         });
       })(req, res, next);
@@ -613,7 +652,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("Error during logout:", err);
         return res.status(500).json({ message: "Logout failed" });
       }
-      try { log(`auth_logout userId=${(req.user as any)?.userId || 'unknown'}`); } catch {}
+      try { log(`auth_logout userId=${(req.user as any)?.userId || 'unknown'}`); } catch { }
       res.json({ message: "Logged out successfully" });
     });
   });
@@ -625,7 +664,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
-      
+
       // Return user without sensitive fields
       res.json(sanitizeUser(user));
     } catch (error) {
@@ -755,11 +794,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const order = await storage.getOrder(req.params.id);
       if (!order) return res.status(404).json({ message: 'Order not found' });
-      
+
       const items = await storage.getOrderItems(order.id);
       const storeIds = Array.from(new Set(items.map(i => i.storeId)));
       const vendors: Array<{ storeId: string; storeName?: string; vendorId: string }> = [];
-      
+
       // Check permissions
       const user = await storage.getUser(req.userId);
       let isAuthorized = false;
@@ -795,7 +834,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.userId;
       const user = await storage.getUser(userId);
-      
+
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
@@ -811,7 +850,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       await storage.updateUserRole(userId, "vendor");
-      
+
       const validatedStoreData = insertStoreSchema.parse({
         vendorId: userId,
         name,
@@ -839,21 +878,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/products', async (req: any, res) => {
     try {
       const { district, giBrand, category, minPrice, maxPrice, search, status, page, pageSize } = req.query;
-      
+
       const filters: any = {};
-      
+
       // Status filtering with strict role-based access control
       const userId = req.userId;
       let userRole: string | null = null;
-      
+
       if (userId) {
         const user = await storage.getUser(userId);
         userRole = user?.role || null;
       }
-      
+
       // Whitelist of valid status values
       const validStatuses = ['pending', 'approved', 'rejected', 'all'];
-      
+
       // Only admins can request non-approved products or 'all' products
       // Vendors should use /api/vendor/products to see their own products with any status
       // Regular users and unauthenticated users can only see approved products
@@ -872,7 +911,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (userRole !== 'admin') {
         filters.isActive = true;
       }
-      
+
       if (district) filters.district = district as string;
       if (giBrand) filters.giBrand = giBrand as string;
       if (category) filters.category = category as string;
@@ -896,16 +935,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           rows.forEach((r: any) => {
             statsMap[r.productId] = { count: Number(r.count || 0), avg: Number(r.avg || 0) };
           });
-        } catch {}
+        } catch { }
       }
-      
+
       // Serialize product prices and attach rating stats
       const serializedProducts = products.map(p => ({
         ...serializeProduct(p),
         ratingAverage: statsMap[p.id]?.avg ?? 0,
         ratingCount: statsMap[p.id]?.count ?? 0,
       }));
-      
+
       if (filters.page && filters.pageSize) {
         const totalPages = Math.ceil(total / filters.pageSize);
         res.json({
@@ -974,7 +1013,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           rows.forEach((u: any) => {
             userMap[u.id] = { firstName: u.firstName ?? null, lastName: u.lastName ?? null, email: u.email ?? null };
           });
-        } catch {}
+        } catch { }
       }
       const withMedia = await Promise.all(approvedList.map(async (r: any) => ({
         ...r,
@@ -1032,7 +1071,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (store) {
           try {
             await storage.createMessage({ senderId: userId, receiverId: store.vendorId, message: `New review on ${product.title}: ${comment.substring(0, 120)}...` });
-          } catch {}
+          } catch { }
         }
       }
       res.json(r);
@@ -1072,7 +1111,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ message: 'File too large (max 10MB)' });
         }
         const ext = type === 'video' ? 'mp4' : 'png';
-        const name = `upload-${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`;
+        const name = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
         const filePath = path.join(dir, name);
         await fs.writeFile(filePath, Buffer.concat(chunks));
         const url = `/uploads/reviews/${reviewId}/${name}`;
@@ -1130,7 +1169,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           rows.forEach((r: any) => {
             statsMap[r.productId] = { count: Number(r.count || 0), avg: Number(r.avg || 0) };
           });
-        } catch {}
+        } catch { }
       }
 
       const serialized = filtered.map(p => ({
@@ -1180,7 +1219,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const created = await storage.createProductCategory(payload);
       try {
         await db.insert(configAudits).values({ entityType: 'product_category', entityId: created.id as any, action: 'create', changes: payload, changedBy: req.userId } as any);
-      } catch {}
+      } catch { }
       res.status(201).json(created);
     } catch (error: any) {
       const msg = (error && error.message) || 'Failed to create product category';
@@ -1204,7 +1243,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updated = await storage.updateProductCategory(id, updates);
       try {
         await db.insert(configAudits).values({ entityType: 'product_category', entityId: id, action: 'update', changes: updates, changedBy: req.userId } as any);
-      } catch {}
+      } catch { }
       res.json(updated);
     } catch (error) {
       console.error('Error updating product category:', error);
@@ -1219,7 +1258,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.deleteProductCategory(id);
       try {
         await db.insert(configAudits).values({ entityType: 'product_category', entityId: id, action: 'delete', changes: null as any, changedBy: req.userId } as any);
-      } catch {}
+      } catch { }
       res.json({ deleted: id });
     } catch (error) {
       console.error('Error deleting product category:', error);
@@ -1366,11 +1405,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const storeId = req.params.id;
       const existingStore = await storage.getStore(storeId);
-      
+
       if (!existingStore) {
         return res.status(404).json({ message: "Store not found" });
       }
-      
+
       if (existingStore.vendorId !== req.userId && req.userRole !== "admin") {
         return res.status(403).json({ message: "Not authorized to update this store" });
       }
@@ -1431,11 +1470,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await ensureVariantSchema();
       const { storeId, variants, ...productData } = req.body;
       const store = await storage.getStore(storeId);
-      
+
       if (!store) {
         return res.status(404).json({ message: "Store not found" });
       }
-      
+
       if (store.vendorId !== req.userId && req.userRole !== "admin") {
         return res.status(403).json({ message: "Not authorized to add products to this store" });
       }
@@ -1481,7 +1520,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const productId = req.params.id;
       const existingProduct = await storage.getProduct(productId);
-      
+
       if (!existingProduct) {
         return res.status(404).json({ message: "Product not found" });
       }
@@ -1494,7 +1533,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { storeId, variants, ...updateData } = req.body;
       const processedVariants = variants && typeof variants === 'object' ? JSON.stringify(variants) : variants;
       const { ...sanitizedUpdates } = insertProductSchema.partial().parse({ variants: processedVariants, ...updateData });
-      
+
       const updatedProduct = await storage.updateProduct(productId, sanitizedUpdates);
       if (!updatedProduct) {
         return res.status(404).json({ message: "Product not found after update" });
@@ -1513,7 +1552,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const productId = req.params.id;
     try {
       const existingProduct = await storage.getProduct(productId);
-      
+
       if (!existingProduct) {
         return res.status(404).json({ message: "Product not found" });
       }
@@ -1558,7 +1597,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const productId = req.params.id;
       const existingProduct = await storage.getProduct(productId);
-      
+
       if (!existingProduct) {
         return res.status(404).json({ message: "Product not found" });
       }
@@ -1590,7 +1629,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const productId = req.params.id;
     try {
       const existingProduct = await storage.getProduct(productId);
-      
+
       if (!existingProduct) {
         return res.status(404).json({ message: "Product not found" });
       }
@@ -1610,12 +1649,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (abs.startsWith(baseDir)) {
               await fs.unlink(abs);
             }
-          } catch {}
+          } catch { }
         }
         await storage.deleteProduct(productId);
         try {
           await db.insert(configAudits).values({ entityType: 'product', entityId: productId, action: 'delete', changes: { title: (existingProduct as any).title, storeId: (existingProduct as any).storeId }, changedBy: req.userId } as any);
-        } catch {}
+        } catch { }
         return res.status(204).send();
       } catch (err: any) {
         // If product is referenced by orders, archive (soft delete) instead
@@ -1623,7 +1662,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const updated = await storage.updateProductActiveStatus(productId, false);
           try {
             await db.insert(configAudits).values({ entityType: 'product', entityId: productId, action: 'archive', changes: null as any, changedBy: req.userId } as any);
-          } catch {}
+          } catch { }
           return res.status(200).json(serializeProduct(updated!));
         }
         throw err;
@@ -1638,7 +1677,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const productId = req.params.id;
       const { isActive } = req.body;
-      
+
       if (typeof isActive !== 'boolean') {
         return res.status(400).json({ message: "isActive must be a boolean" });
       }
@@ -1708,7 +1747,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const groupId = req.params.id;
       const existingGroup = await storage.getProductGroup(groupId);
-      
+
       if (!existingGroup) {
         return res.status(404).json({ message: "Product group not found" });
       }
@@ -1734,7 +1773,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const groupId = req.params.id;
       const existingGroup = await storage.getProductGroup(groupId);
-      
+
       if (!existingGroup) {
         return res.status(404).json({ message: "Product group not found" });
       }
@@ -1841,10 +1880,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Vendor must have a store to create promotions" });
       }
 
-      const validatedData = insertPromotionSchema.parse({
+      const dataToValidate = {
         ...req.body,
         storeId: req.body.storeId || stores[0].id,
-      });
+        startAt: req.body.startAt ? new Date(req.body.startAt) : undefined,
+        endAt: req.body.endAt ? new Date(req.body.endAt) : undefined,
+      };
+
+      const validatedData = insertPromotionSchema.parse(dataToValidate);
 
       const store = await storage.getStore(validatedData.storeId);
       if (!store || store.vendorId !== req.userId) {
@@ -1880,7 +1923,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const promotionId = req.params.id;
       const existingPromotion = await storage.getPromotion(promotionId);
-      
+
       if (!existingPromotion) {
         return res.status(404).json({ message: "Promotion not found" });
       }
@@ -1891,7 +1934,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const validatedData = insertPromotionSchema.partial().parse(req.body);
-      
+
       if (validatedData.targetId !== undefined && validatedData.targetId !== null) {
         const appliesTo = validatedData.appliesTo || existingPromotion.appliesTo;
         if (appliesTo === 'product') {
@@ -1922,7 +1965,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const promotionId = req.params.id;
       const existingPromotion = await storage.getPromotion(promotionId);
-      
+
       if (!existingPromotion) {
         return res.status(404).json({ message: "Promotion not found" });
       }
@@ -2070,15 +2113,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const productMap = new Map((productsList || []).filter(Boolean).map((p: any) => [p.id, p]));
       const eligibleItems = items.filter((i) => {
         const p = productMap.get(i.productId) as any;
-        if (!p) { invalid.push(i.productId); return false; }
-        if (p.storeId !== store.id) { invalid.push(i.productId); return false; }
-        if (p.status !== 'approved') { invalid.push(i.productId); return false; }
-        if (p.stock <= 0) { invalid.push(i.productId); return false; }
-        if (typeof i.quantityLimit === 'number' && i.quantityLimit > p.stock) { invalid.push(i.productId); return false; }
+        if (!p) {
+          console.log(`Product ${i.productId} not found`);
+          invalid.push(i.productId);
+          return false;
+        }
+        if (p.storeId !== store.id) {
+          console.log(`Product ${i.productId} doesn't belong to store ${store.id}, belongs to ${p.storeId}`);
+          invalid.push(i.productId);
+          return false;
+        }
+        if (p.status !== 'approved') {
+          console.log(`Product ${i.productId} (${p.title}) status is '${p.status}', not 'approved'`);
+          invalid.push(i.productId);
+          return false;
+        }
+        if (p.stock <= 0) {
+          console.log(`Product ${i.productId} has no stock`);
+          invalid.push(i.productId);
+          return false;
+        }
+        if (typeof i.quantityLimit === 'number' && i.quantityLimit > p.stock) {
+          console.log(`Product ${i.productId} quantity limit exceeds stock`);
+          invalid.push(i.productId);
+          return false;
+        }
+        console.log(`Product ${i.productId} (${p.title}) is eligible`);
         return true;
       });
 
+      console.log(`Eligible products: ${eligibleItems.length}, Invalid: ${invalid.length}`);
+
       if (eligibleItems.length === 0) {
+        console.error('No eligible products:', { invalidIds: invalid, reason: 'All products failed validation' });
         return res.status(400).json({ message: 'No eligible products to add', invalid });
       }
 
@@ -2105,7 +2172,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             changes: { overridePrice: ins.overridePrice, quantityLimit: ins.quantityLimit, conditions: ins.conditions },
             changedBy: req.userId,
           });
-        } catch {}
+        } catch { }
       }
 
       res.status(201).json({ added: inserted.length, invalid });
@@ -2143,13 +2210,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
             changeType: 'remove',
             changedBy: req.userId,
           });
-        } catch {}
+        } catch { }
       }
 
       res.json({ removed: ids.length });
     } catch (error) {
       console.error('Error removing promotion products:', error);
       res.status(500).json({ message: 'Failed to remove promotion products' });
+    }
+  });
+
+  // Rules & Actions Management
+  app.get('/api/vendor/promotions/:id/rules', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const rules = await db.select().from(promotionRules).where(eq(promotionRules.promotionId, req.params.id));
+      res.json(rules);
+    } catch (e) {
+      res.status(500).json({ message: 'Failed to fetch rules' });
+    }
+  });
+
+  app.post('/api/vendor/promotions/:id/rules', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const promotionId = req.params.id;
+      // Basic auth check: verify promotion belongs to vendor
+      const promo = await storage.getPromotion(promotionId);
+      if (!promo) return res.status(404).json({ message: 'Promotion not found' });
+      // TODO: Add stricter vendor ownership check if needed (promo.storeId -> vendorId)
+
+      const ruleData = insertPromotionRuleSchema.parse({ ...req.body, promotionId });
+      const [created] = await db.insert(promotionRules).values(ruleData).returning();
+      res.status(201).json(created);
+    } catch (error: any) {
+      if (error.name === 'ZodError') return res.status(400).json({ message: 'Invalid rule data', errors: error.errors });
+      res.status(500).json({ message: 'Failed to create rule' });
+    }
+  });
+
+  app.delete('/api/vendor/promotions/rules/:id', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      await db.delete(promotionRules).where(eq(promotionRules.id, req.params.id));
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ message: 'Failed to delete rule' });
+    }
+  });
+
+  app.get('/api/vendor/promotions/:id/actions', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const actions = await db.select().from(promotionActions).where(eq(promotionActions.promotionId, req.params.id));
+      res.json(actions);
+    } catch (e) {
+      res.status(500).json({ message: 'Failed to fetch actions' });
+    }
+  });
+
+  app.post('/api/vendor/promotions/:id/actions', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const promotionId = req.params.id;
+      const promo = await storage.getPromotion(promotionId);
+      if (!promo) return res.status(404).json({ message: 'Promotion not found' });
+
+      const actionData = insertPromotionActionSchema.parse({ ...req.body, promotionId });
+      const [created] = await db.insert(promotionActions).values(actionData).returning();
+      res.status(201).json(created);
+    } catch (error: any) {
+      if (error.name === 'ZodError') return res.status(400).json({ message: 'Invalid action data', errors: error.errors });
+      res.status(500).json({ message: 'Failed to create action' });
+    }
+  });
+
+  app.delete('/api/vendor/promotions/actions/:id', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      await db.delete(promotionActions).where(eq(promotionActions.id, req.params.id));
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ message: 'Failed to delete action' });
     }
   });
 
@@ -2184,7 +2320,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           productId: i.productId,
           storeId: i.storeId,
           quantity: i.quantity,
-          price: finalPrice,
+          price: parseFloat(finalPrice), // Ensure number
+          originalPrice: parseFloat(finalPrice),
           variantSku: i.variantSku || null,
           variantAttributes: i.variantAttributes || null,
           weightKg: productMap.get(i.productId)?.weightKg ? parseFloat(String(productMap.get(i.productId)?.weightKg)) : undefined,
@@ -2196,17 +2333,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
           variantTaxRate,
         };
       }));
-      const subtotal = normalized.reduce((s, it) => {
-        const unit = parseFloat(String(it.price));
-        const qty = Number(it.quantity);
-        const safeLine = (Number.isFinite(unit) ? unit : 0) * (Number.isFinite(qty) ? qty : 0);
-        return s + safeLine;
-      }, 0);
+
+      // Calculate base subtotal
+      const subtotal = normalized.reduce((s, it) => s + (it.price * it.quantity), 0);
+
+      // Apply Promotions
+      const promoContext = {
+        items: normalized.map(i => ({
+          productId: i.productId,
+          quantity: i.quantity,
+          price: i.price,
+          categoryId: i.productCategory,
+        })),
+        total: subtotal,
+        userId: userId !== 'anonymous' ? userId : undefined,
+      };
+
+      const promoResult = await promotionEngine.applyPromotions(promoContext);
+      const discountedSubtotal = promoResult.finalTotal;
+      const totalDiscount = promoResult.totalDiscount;
+
+      // Compute Tax (Note: Currently taxing original amount, should ideally tax discounted)
       const province = shippingProvince || detectProvince(shippingAddress || [shippingStreet, shippingCity, shippingProvince, shippingPostalCode, shippingCountry].filter(Boolean).join(', '));
       const taxRes = await computeTax(normalized as any as Array<TaxItem>, province, userId);
-      const shipRes = await computeShipping(normalized, province, shippingMethod);
-      const total = subtotal + taxRes.amount + shipRes.amount;
-      res.json({ subtotal: subtotal.toFixed(2), taxes: taxRes.amount.toFixed(2), shipping: shipRes.amount.toFixed(2), total: total.toFixed(2), taxDetails: taxRes.breakdown, carrier: shipRes.carrier, province: province || null, method: (shippingMethod || 'standard') });
+
+      // Compute Shipping
+      let shipRes = await computeShipping(normalized.map(n => ({ ...n, price: String(n.price) })), province, shippingMethod);
+
+      // Check for Free Shipping Action
+      const freeShippingApplied = promoResult.applied.some(a => a.freeShipping);
+      if (freeShippingApplied) {
+        shipRes.amount = 0;
+        shipRes.breakdown = [];
+      }
+
+      const total = discountedSubtotal + taxRes.amount + shipRes.amount;
+
+      res.json({
+        subtotal: subtotal.toFixed(2),
+        discount: totalDiscount.toFixed(2),
+        discountDetails: promoResult.applied,
+        taxes: taxRes.amount.toFixed(2),
+        shipping: shipRes.amount.toFixed(2),
+        total: total.toFixed(2),
+        taxDetails: taxRes.breakdown,
+        carrier: shipRes.carrier,
+        province: province || null,
+        method: (shippingMethod || 'standard')
+      });
     } catch (error) {
       console.error('Checkout calculate error:', error);
       res.status(500).json({ message: 'Failed to calculate' });
@@ -2291,7 +2465,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             arr.push({ type: String(p.type), value: String(p.value), minQuantity: Number(p.minQuantity || 1) });
             activeByVariantSku[String(p.targetId)] = arr;
           }
-        } catch {}
+        } catch { }
       }
 
       log(`Order create start: user=${userId} items=${items.length}`);
@@ -2329,8 +2503,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const applicablePromos = [
           ...(activeByProduct[item.productId] || []).filter(p => item.quantity >= p.minQuantity),
           ...((item.variantSku ? (activeByVariantSku[String(item.variantSku)] || []) : [])
-              .filter(p => item.quantity >= p.minQuantity)
-              .map((p) => ({ ...p, overridePrice: null })))
+            .filter(p => item.quantity >= p.minQuantity)
+            .map((p) => ({ ...p, overridePrice: null })))
         ];
         const candidates: number[] = [base];
         for (const ap of applicablePromos) {
@@ -2445,7 +2619,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const newStock = Math.max(0, Number(current.stock || 0) - vi.quantity);
               await storage.updateProductVariant(current.id, { stock: newStock } as any);
             }
-          } catch {}
+          } catch { }
         } else {
           const p = await storage.getProduct(vi.productId);
           if (p) {
@@ -2474,7 +2648,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               message: `Your COD order ${orderRef} has been confirmed. Estimated delivery: ${estimatedDelivery}. Please prepare PKR ${totalComputed.toFixed(2)} for payment on delivery.`,
             } as any);
           }
-        } catch {}
+        } catch { }
       }
 
       try {
@@ -2503,7 +2677,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             } as any);
           }
         }
-      } catch {}
+      } catch { }
 
       res.status(201).json({ ...order, reference: orderRef, estimatedDelivery });
     } catch (error: any) {
@@ -2519,7 +2693,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.userId;
       const order = await storage.getOrder(req.params.id);
-      
+
       if (!order) {
         return res.status(404).json({ message: "Order not found" });
       }
@@ -2530,7 +2704,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const vendorStores = await storage.getStoresByVendor(userId);
         const vendorStoreIds = vendorStores.map(s => s.id);
         const hasVendorItem = orderItems.some(item => vendorStoreIds.includes(item.storeId));
-        
+
         if (!hasVendorItem) {
           return res.status(403).json({ message: "Not authorized to view this order" });
         }
@@ -2750,7 +2924,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.userId;
       const { status, processingEstimate, trackingNumber, deliveryConfirmed, courierService } = req.body;
-      
+
       if (!status) {
         return res.status(400).json({ message: "Status is required" });
       }
@@ -2766,7 +2940,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const vendorStores = await storage.getStoresByVendor(userId);
         const vendorStoreIds = vendorStores.map(s => s.id);
         const hasVendorItem = orderItems.some(item => vendorStoreIds.includes(item.storeId));
-        
+
         if (!hasVendorItem) {
           return res.status(403).json({ message: "Not authorized to update this order" });
         }
@@ -2826,7 +3000,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             message: `Order status updated to ${status}${courierService ? ` via ${courierService}` : ''}${trackingNumber ? `, tracking: ${trackingNumber}` : ''}${processingEstimate ? `, estimate: ${processingEstimate}` : ''}.`,
           } as any);
         }
-      } catch {}
+      } catch { }
 
       const finalOrder = await storage.getOrder(req.params.id);
       res.json(finalOrder);
@@ -2862,7 +3036,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const now = Date.now();
       // For debugging purposes, let's log the times
       console.log(`[Cancel Order] Order: ${order.id}, Created: ${new Date(created).toISOString()}, Now: ${new Date(now).toISOString()}, Diff: ${now - created}`);
-      
+
       // Extend cancellation window to 7 days
       const withinWindow = now - created < 7 * 24 * 60 * 60 * 1000;
       if (!withinWindow) {
@@ -2897,7 +3071,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             message: `Your order has been cancelled: ${reason}.`,
           } as any);
         }
-      } catch {}
+      } catch { }
       res.json(updated);
     } catch (error) {
       console.error('Cancel order error:', error);
@@ -2940,7 +3114,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             message: `Payment collected for order. Receipt: ${receiptId}.`,
           } as any);
         }
-      } catch {}
+      } catch { }
 
       res.json(updated);
     } catch (error) {
@@ -2992,7 +3166,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             message: `Order re-activated${reason ? `: ${reason}` : ''}.`,
           } as any);
         }
-      } catch {}
+      } catch { }
       res.json(updated);
     } catch (error) {
       console.error('Reactivate order error:', error);
@@ -3039,7 +3213,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             message: `Payment verified (${m})${reference ? `, ref: ${reference}` : ''}.`,
           } as any);
         }
-      } catch {}
+      } catch { }
       res.json(updated);
     } catch (error) {
       console.error('Verify payment error:', error);
@@ -3090,7 +3264,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const stores = await storage.getStoresByVendor(req.userId);
       const storeIds = stores.map(s => s.id);
-      
+
       const allTransactions = await Promise.all(
         storeIds.map(id => storage.getTransactionsByStore(id))
       );
@@ -3140,7 +3314,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const stores = await storage.getStoresByVendor(req.userId);
       const storeIds = stores.map(s => s.id);
-      
+
       const allTransactions = await Promise.all(
         storeIds.map(id => storage.getTransactionsByStore(id))
       );
@@ -3187,7 +3361,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           changes: { previous: before?.status, status, reason: reason || null } as any,
           changedBy: req.userId,
         } as any);
-      } catch {}
+      } catch { }
 
       try {
         const vendorUser = await storage.getUser(updatedStore.vendorId);
@@ -3203,7 +3377,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             message: msgLines.join(' '),
           } as any);
         }
-      } catch {}
+      } catch { }
 
       res.json(updatedStore);
     } catch (error) {
@@ -3346,7 +3520,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
         skuMetrics = skus.map(sku => ({ sku, units: skuAgg[sku].units, revenue: Number(skuAgg[sku].revenue.toFixed(2)), stock: variantStocks[sku] ?? 0 }));
-      } catch {}
+      } catch { }
 
       const analytics = {
         totalProducts: products.total,
@@ -3404,7 +3578,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           changes: updates,
           changedBy: req.userId,
         } as any);
-      } catch {}
+      } catch { }
       res.json(updated);
     } catch (error) {
       console.error('Admin settings update error:', error);
@@ -3444,7 +3618,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           changes: payload,
           changedBy: req.userId,
         } as any);
-      } catch {}
+      } catch { }
       res.status(201).json(created);
     } catch (error) {
       console.error('Admin create tax rule error:', error);
@@ -3473,7 +3647,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           changes: updates,
           changedBy: req.userId,
         } as any);
-      } catch {}
+      } catch { }
       res.json(updated);
     } catch (error) {
       console.error('Admin update tax rule error:', error);
@@ -3494,7 +3668,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           changes: null as any,
           changedBy: req.userId,
         } as any);
-      } catch {}
+      } catch { }
       res.json({ deleted: id });
     } catch (error) {
       console.error('Admin delete tax rule error:', error);
@@ -3539,7 +3713,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           changes: payload,
           changedBy: req.userId,
         } as any);
-      } catch {}
+      } catch { }
       res.status(201).json(created);
     } catch (error) {
       console.error('Admin create shipping rate rule error:', error);
@@ -3573,7 +3747,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           changes: updates,
           changedBy: req.userId,
         } as any);
-      } catch {}
+      } catch { }
       res.json(updated);
     } catch (error) {
       console.error('Admin update shipping rate rule error:', error);
@@ -3594,7 +3768,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           changes: null as any,
           changedBy: req.userId,
         } as any);
-      } catch {}
+      } catch { }
       res.json({ deleted: id });
     } catch (error) {
       console.error('Admin delete shipping rate rule error:', error);
@@ -3686,7 +3860,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put('/api/admin/users/:id/role', isAuthenticated, isAdmin, async (req: any, res) => {
     try {
       const { role } = req.body;
-      if (!role || !['buyer', 'vendor', 'admin'].includes(role)) {
+      if (!role || !['buyer', 'vendor', 'admin', 'trainee', 'artisan'].includes(role)) {
         return res.status(400).json({ message: "Invalid role" });
       }
 
@@ -3740,7 +3914,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           changes: { isActive },
           changedBy: req.userId,
         } as any);
-      } catch {}
+      } catch { }
       res.json(sanitizeUser(user));
     } catch (error) {
       console.error('Error updating user active:', error);
@@ -3772,7 +3946,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           changes: { byAdmin: req.userId },
           changedBy: req.userId,
         } as any);
-      } catch {}
+      } catch { }
       res.json({ tempPassword: temp });
     } catch (error) {
       console.error('Error resetting user password:', error);
@@ -3919,7 +4093,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Verify secret token
       const authHeader = req.headers.authorization;
       const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
-      
+
       if (!token || token !== process.env.SEED_SECRET) {
         return res.status(401).json({ message: "Unauthorized - Invalid seed token" });
       }
@@ -3927,18 +4101,299 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Import and run seed function
       const { seed } = await import('./seed.js');
       await seed();
-      
-      res.json({ 
-        success: true, 
-        message: "Database seeded successfully" 
+
+      res.json({
+        success: true,
+        message: "Database seeded successfully"
       });
     } catch (error: any) {
       console.error("Error seeding database:", error);
-      res.status(500).json({ 
+      res.status(500).json({
         success: false,
         message: "Failed to seed database",
-        error: error.message 
+        error: error.message
       });
+    }
+  });
+
+  // ===== ARTISAN TRAINING MODULE API ROUTES =====
+
+  // Get all Sanatzar centers
+  app.get('/api/sanatzar-centers', async (req, res) => {
+    try {
+      const rows = await db.select().from(sanatzarCenters).orderBy(sanatzarCenters.district);
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching centers:", error);
+      res.status(500).json({ message: "Failed to fetch centers" });
+    }
+  });
+
+  // Get single center
+  app.get('/api/sanatzar-centers/:id', async (req, res) => {
+    try {
+      const [center] = await db.select().from(sanatzarCenters).where(eq(sanatzarCenters.id, req.params.id));
+      if (!center) return res.status(404).json({ message: "Center not found" });
+      res.json(center);
+    } catch (error) {
+      console.error("Error fetching center:", error);
+      res.status(500).json({ message: "Failed to fetch center" });
+    }
+  });
+
+  // Get all training programs
+  app.get('/api/training-programs', async (req, res) => {
+    try {
+      const { status, centerId } = req.query;
+      let query = db.select().from(trainingPrograms);
+      const conditions = [];
+      if (status) conditions.push(eq(trainingPrograms.status, status as string));
+      if (centerId) conditions.push(eq(trainingPrograms.centerId, centerId as string));
+      if (conditions.length > 0) {
+        query = query.where(and(...conditions)) as any;
+      }
+      const rows = await query;
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching programs:", error);
+      res.status(500).json({ message: "Failed to fetch programs" });
+    }
+  });
+
+  // Get single program
+  app.get('/api/training-programs/:id', async (req, res) => {
+    try {
+      const [program] = await db.select().from(trainingPrograms).where(eq(trainingPrograms.id, req.params.id));
+      if (!program) return res.status(404).json({ message: "Program not found" });
+      res.json(program);
+    } catch (error) {
+      console.error("Error fetching program:", error);
+      res.status(500).json({ message: "Failed to fetch program" });
+    }
+  });
+
+  // Get survey questions
+  app.get('/api/survey-questions/:type', async (req, res) => {
+    try {
+      const rows = await db.select().from(surveyQuestions)
+        .where(and(eq(surveyQuestions.type, req.params.type), eq(surveyQuestions.isActive, true)))
+        .orderBy(surveyQuestions.order);
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching survey questions:", error);
+      res.status(500).json({ message: "Failed to fetch survey questions" });
+    }
+  });
+
+  // Submit training application
+  app.post('/api/training-applications', async (req, res) => {
+    try {
+      const data = req.body;
+      const [application] = await db.insert(trainingApplications).values({
+        programId: data.programId,
+        fullName: data.fullName,
+        email: data.email,
+        phone: data.phone,
+        cnic: data.cnic || null,
+        dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : null,
+        address: data.address,
+        city: data.city,
+        district: data.district,
+        education: data.education || null,
+        priorCraftExperience: data.priorCraftExperience || null,
+        motivation: data.motivation,
+        surveyResponses: data.surveyResponses || null,
+      }).returning();
+      res.status(201).json(application);
+    } catch (error) {
+      console.error("Error submitting training application:", error);
+      res.status(500).json({ message: "Failed to submit application" });
+    }
+  });
+
+  // Submit artisan registration
+  app.post('/api/artisan-registrations', async (req, res) => {
+    try {
+      const data = req.body;
+      const [registration] = await db.insert(registeredArtisans).values({
+        centerId: data.centerId,
+        fullName: data.fullName,
+        email: data.email,
+        phone: data.phone,
+        cnic: data.cnic || null,
+        dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : null,
+        address: data.address,
+        city: data.city,
+        district: data.district,
+        bio: data.bio || null,
+        education: data.education || null,
+        languages: data.languages || null,
+        primaryCraft: data.primaryCraft,
+        craftsKnown: data.craftsKnown || null,
+        skillLevel: data.skillLevel,
+        yearsExperience: data.yearsExperience ? parseInt(data.yearsExperience) : null,
+        workPreference: data.workPreference,
+        preferredCenterId: data.centerId,
+        availabilityHours: data.availabilityHours ? parseInt(data.availabilityHours) : null,
+        availableDays: data.availableDays || null,
+        paymentMethod: data.paymentMethod || null,
+        paymentDetails: data.paymentDetails ? { account: data.paymentDetails } : null,
+        surveyResponses: data.surveyResponses || null,
+      }).returning();
+      res.status(201).json(registration);
+    } catch (error) {
+      console.error("Error submitting artisan registration:", error);
+      res.status(500).json({ message: "Failed to submit registration" });
+    }
+  });
+
+  // Admin: Get all training applications
+  app.get('/api/admin/training-applications', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const rows = await db.select().from(trainingApplications).orderBy(desc(trainingApplications.appliedAt));
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching applications:", error);
+      res.status(500).json({ message: "Failed to fetch applications" });
+    }
+  });
+
+  // Admin: Get all registered artisans
+  app.get('/api/admin/registered-artisans', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const rows = await db.select().from(registeredArtisans).orderBy(desc(registeredArtisans.registeredAt));
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching artisans:", error);
+      res.status(500).json({ message: "Failed to fetch artisans" });
+    }
+  });
+
+  // Admin: CRUD for centers
+  app.post('/api/admin/sanatzar-centers', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const [center] = await db.insert(sanatzarCenters).values(req.body).returning();
+      res.status(201).json(center);
+    } catch (error) {
+      console.error("Error creating center:", error);
+      res.status(500).json({ message: "Failed to create center" });
+    }
+  });
+
+  app.put('/api/admin/sanatzar-centers/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const [center] = await db.update(sanatzarCenters).set(req.body).where(eq(sanatzarCenters.id, req.params.id)).returning();
+      res.json(center);
+    } catch (error) {
+      console.error("Error updating center:", error);
+      res.status(500).json({ message: "Failed to update center" });
+    }
+  });
+
+  app.delete('/api/admin/sanatzar-centers/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      await db.delete(sanatzarCenters).where(eq(sanatzarCenters.id, req.params.id));
+      res.json({ message: "Center deleted" });
+    } catch (error) {
+      console.error("Error deleting center:", error);
+      res.status(500).json({ message: "Failed to delete center" });
+    }
+  });
+
+  // Admin: CRUD for Categories (Districts)
+  app.get('/api/categories', async (req, res) => {
+    try {
+      const rows = await db.select().from(categories).orderBy(categories.district);
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching categories:", error);
+      res.status(500).json({ message: "Failed to fetch categories" });
+    }
+  });
+
+  app.post('/api/admin/categories', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const [category] = await db.insert(categories).values(req.body).returning();
+      res.status(201).json(category);
+    } catch (error) {
+      console.error("Error creating category:", error);
+      res.status(500).json({ message: "Failed to create category" });
+    }
+  });
+
+  app.put('/api/admin/categories/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const [category] = await db.update(categories).set(req.body).where(eq(categories.id, req.params.id)).returning();
+      res.json(category);
+    } catch (error) {
+      console.error("Error updating category:", error);
+      res.status(500).json({ message: "Failed to update category" });
+    }
+  });
+
+  app.delete('/api/admin/categories/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      await db.delete(categories).where(eq(categories.id, req.params.id));
+      res.json({ message: "Category deleted" });
+    } catch (error) {
+      console.error("Error deleting category:", error);
+      res.status(500).json({ message: "Failed to delete category" });
+    }
+  });
+
+  // Admin: CRUD for training programs
+  app.post('/api/admin/training-programs', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const [program] = await db.insert(trainingPrograms).values(req.body).returning();
+      res.status(201).json(program);
+    } catch (error) {
+      console.error("Error creating program:", error);
+      res.status(500).json({ message: "Failed to create program" });
+    }
+  });
+
+  app.put('/api/admin/training-programs/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const [program] = await db.update(trainingPrograms).set(req.body).where(eq(trainingPrograms.id, req.params.id)).returning();
+      res.json(program);
+    } catch (error) {
+      console.error("Error updating program:", error);
+      res.status(500).json({ message: "Failed to update program" });
+    }
+  });
+
+  // Admin: Approve/reject training application
+  app.put('/api/admin/training-applications/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { status, adminNotes } = req.body;
+      const [application] = await db.update(trainingApplications)
+        .set({ status, adminNotes, processedAt: new Date(), processedBy: req.userId })
+        .where(eq(trainingApplications.id, req.params.id))
+        .returning();
+      res.json(application);
+    } catch (error) {
+      console.error("Error updating application:", error);
+      res.status(500).json({ message: "Failed to update application" });
+    }
+  });
+
+  // Admin: Approve/reject artisan registration
+  app.put('/api/admin/registered-artisans/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const { status } = req.body;
+      const updates: any = { status };
+      if (status === 'active') {
+        updates.approvedAt = new Date();
+        updates.approvedBy = req.userId;
+      }
+      const [artisan] = await db.update(registeredArtisans)
+        .set(updates)
+        .where(eq(registeredArtisans.id, req.params.id))
+        .returning();
+      res.json(artisan);
+    } catch (error) {
+      console.error("Error updating artisan:", error);
+      res.status(500).json({ message: "Failed to update artisan" });
     }
   });
 

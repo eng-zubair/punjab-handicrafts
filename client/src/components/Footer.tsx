@@ -23,7 +23,7 @@ export default function Footer() {
             </p>
             <img src={swdLogo} alt="Official Logo" className="h-20 w-auto" loading="lazy" decoding="async" />
           </div>
-          
+
           <div>
             <h4 className="font-semibold mb-4">GI Brands</h4>
             <ul className="space-y-2 text-sm text-muted-foreground">
@@ -36,17 +36,19 @@ export default function Footer() {
               ))}
             </ul>
           </div>
-          
+
           <div>
             <h4 className="font-semibold mb-4">Artisans</h4>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li><Link href="/vendor/register" className="hover:text-foreground transition-colors">Create Store</Link></li>
+              <li><Link href="/artisan/register" className="hover:text-foreground transition-colors">Register as Artisan</Link></li>
+              <li><Link href="/training" className="hover:text-foreground transition-colors">Training Programs</Link></li>
               <li><Link href="/vendor/pricing" className="hover:text-foreground transition-colors">Pricing</Link></li>
               <li><Link href="/vendor/guide" className="hover:text-foreground transition-colors">Seller Guide</Link></li>
               <li><Link href="/vendor/verification" className="hover:text-foreground transition-colors">GI Verification</Link></li>
             </ul>
           </div>
-          
+
           <div>
             <h4 className="font-semibold mb-4">Support</h4>
             <ul className="space-y-2 text-sm text-muted-foreground">
@@ -57,15 +59,15 @@ export default function Footer() {
             </ul>
           </div>
         </div>
-        
+
         <Separator className="my-8" />
-        
+
         <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-muted-foreground">
           <p>© 2025 Sanatzar. All rights reserved.</p>
           <div className="flex items-center gap-6">
             <Link href="/privacy-policy" className="hover:text-foreground transition-colors">Privacy Policy</Link>
             <Link href="/terms" className="hover:text-foreground transition-colors">Terms of Service</Link>
-            
+
           </div>
         </div>
       </div>

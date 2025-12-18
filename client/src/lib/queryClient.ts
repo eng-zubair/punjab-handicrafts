@@ -2,8 +2,20 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+    let errorMessage = res.statusText;
+    try {
+      const errorData = await res.clone().json(); // Clone to not consume body if we need text later
+      if (errorData && errorData.message) {
+        errorMessage = errorData.message;
+      } else {
+        const text = await res.text();
+        errorMessage = text || res.statusText;
+      }
+    } catch (e) {
+      const text = await res.text();
+      errorMessage = text || res.statusText;
+    }
+    throw new Error(`${errorMessage}`);
   }
 }
 
@@ -28,39 +40,39 @@ export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
-  async ({ queryKey }) => {
-    let url: string;
-    
-    if (queryKey.length === 1) {
-      url = queryKey[0] as string;
-    } else {
-      const baseUrl = queryKey[0] as string;
-      const params = queryKey[1];
-      
-      if (typeof params === 'object' && params !== null && !Array.isArray(params)) {
-        const searchParams = new URLSearchParams();
-        Object.entries(params).forEach(([key, value]) => {
-          if (value !== undefined && value !== null) {
-            searchParams.append(key, String(value));
-          }
-        });
-        url = searchParams.toString() ? `${baseUrl}?${searchParams.toString()}` : baseUrl;
+    async ({ queryKey }) => {
+      let url: string;
+
+      if (queryKey.length === 1) {
+        url = queryKey[0] as string;
       } else {
-        url = queryKey.join("/") as string;
+        const baseUrl = queryKey[0] as string;
+        const params = queryKey[1];
+
+        if (typeof params === 'object' && params !== null && !Array.isArray(params)) {
+          const searchParams = new URLSearchParams();
+          Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined && value !== null) {
+              searchParams.append(key, String(value));
+            }
+          });
+          url = searchParams.toString() ? `${baseUrl}?${searchParams.toString()}` : baseUrl;
+        } else {
+          url = queryKey.join("/") as string;
+        }
       }
-    }
-    
-    const res = await fetch(url, {
-      credentials: "include",
-    });
 
-    if (unauthorizedBehavior === "returnNull" && res.status === 401) {
-      return null;
-    }
+      const res = await fetch(url, {
+        credentials: "include",
+      });
 
-    await throwIfResNotOk(res);
-    return await res.json();
-  };
+      if (unauthorizedBehavior === "returnNull" && res.status === 401) {
+        return null;
+      }
+
+      await throwIfResNotOk(res);
+      return await res.json();
+    };
 
 export const queryClient = new QueryClient({
   defaultOptions: {

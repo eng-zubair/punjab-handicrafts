@@ -66,8 +66,12 @@ export function AuthDialog({ open, onOpenChange, defaultTab = "login" }: AuthDia
             setLocation("/admin/dashboard");
           } else if (u?.role === "vendor") {
             setLocation("/vendor/dashboard");
+          } else if (u?.role === "trainee") {
+            setLocation("/trainee/dashboard");
+          } else if (u?.role === "artisan") {
+            setLocation("/artisan/dashboard");
           }
-        } catch {}
+        } catch { }
         toast({
           title: "Welcome back!",
           description: "You have successfully logged in.",

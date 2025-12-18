@@ -237,6 +237,11 @@ export const promotions = pgTable("promotions", {
   startAt: timestamp("start_at"),
   endAt: timestamp("end_at"),
   status: text("status").notNull().default("active"),
+  // New fields for Promotion Engine
+  priority: integer("priority").notNull().default(0),
+  usageLimit: integer("usage_limit"), // Global limit
+  usageLimitPerUser: integer("usage_limit_per_user"), // Per user limit
+  stackable: boolean("stackable").notNull().default(false), // Can be combined with other discounts
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -257,6 +262,24 @@ export const promotionProductHistory = pgTable("promotion_product_history", {
   changeType: text("change_type").notNull(),
   changes: jsonb("changes"),
   changedBy: varchar("changed_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const promotionRules = pgTable("promotion_rules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  promotionId: varchar("promotion_id").notNull().references(() => promotions.id, { onDelete: 'cascade' }),
+  type: text("type").notNull(), // e.g., 'min_order_value', 'specific_product', 'customer_group', 'first_time_order'
+  operator: text("operator").notNull(), // e.g., 'eq', 'gt', 'lt', 'in', 'gte', 'lte'
+  value: jsonb("value").notNull(), // The threshold or target value
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const promotionActions = pgTable("promotion_actions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  promotionId: varchar("promotion_id").notNull().references(() => promotions.id, { onDelete: 'cascade' }),
+  type: text("type").notNull(), // e.g., 'percentage_discount', 'fixed_amount', 'free_shipping', 'free_gift'
+  value: decimal("value", { precision: 10, scale: 2 }), // The discount amount or percentage
+  target: text("target").notNull().default("order_total"), // 'order_total', 'shipping', 'line_item', 'cheapest_item'
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -486,6 +509,23 @@ export type Promotion = typeof promotions.$inferSelect;
 
 export type InsertPromotionProduct = z.infer<typeof insertPromotionProductSchema>;
 export type PromotionProduct = typeof promotionProducts.$inferSelect;
+
+
+
+export const insertPromotionRuleSchema = createInsertSchema(promotionRules).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertPromotionRule = z.infer<typeof insertPromotionRuleSchema>;
+export type PromotionRule = typeof promotionRules.$inferSelect;
+
+export const insertPromotionActionSchema = createInsertSchema(promotionActions).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertPromotionAction = z.infer<typeof insertPromotionActionSchema>;
+export type PromotionAction = typeof promotionActions.$inferSelect;
+
 export type InsertPromotionProductHistory = z.infer<typeof insertPromotionProductHistorySchema>;
 export type PromotionProductHistory = typeof promotionProductHistory.$inferSelect;
 
@@ -563,3 +603,214 @@ export const configAudits = pgTable("config_audits", {
   changedBy: varchar("changed_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// ===== ARTISAN TRAINING MODULE TABLES =====
+
+// Sanatzar Training Centers (44 centers across Punjab districts)
+export const sanatzarCenters = pgTable("sanatzar_centers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  district: text("district").notNull(),
+  address: text("address").notNull(),
+  city: text("city").notNull(),
+  phone: varchar("phone"),
+  email: varchar("email"),
+  description: text("description"),
+  facilities: text("facilities").array(),
+  capacity: integer("capacity"),
+  imageUrl: text("image_url"),
+  managerName: text("manager_name"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Training Program Templates (common programs reusable across centers)
+export const trainingProgramTemplates = pgTable("training_program_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  craft: text("craft").notNull(),
+  description: text("description"),
+  durationWeeks: integer("duration_weeks").notNull(),
+  skillLevel: text("skill_level").notNull(), // beginner | intermediate | advanced
+  curriculum: jsonb("curriculum"),
+  requirements: text("requirements"),
+  benefits: text("benefits"),
+  imageUrl: text("image_url"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Training Programs (instances at specific centers with dates)
+export const trainingPrograms = pgTable("training_programs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  templateId: varchar("template_id").references(() => trainingProgramTemplates.id),
+  centerId: varchar("center_id").notNull().references(() => sanatzarCenters.id),
+  title: text("title").notNull(),
+  craft: text("craft").notNull(),
+  description: text("description"),
+  durationWeeks: integer("duration_weeks").notNull(),
+  batchSize: integer("batch_size").notNull().default(20),
+  fee: decimal("fee", { precision: 10, scale: 2 }).default("0"),
+  skillLevel: text("skill_level").notNull(),
+  curriculum: jsonb("curriculum"),
+  requirements: text("requirements"),
+  benefits: text("benefits"),
+  startDate: timestamp("start_date"),
+  endDate: timestamp("end_date"),
+  applicationDeadline: timestamp("application_deadline"),
+  status: text("status").notNull().default("upcoming"), // upcoming | enrolling | ongoing | completed | cancelled
+  imageUrl: text("image_url"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Training Applications
+export const trainingApplications = pgTable("training_applications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  programId: varchar("program_id").notNull().references(() => trainingPrograms.id),
+  // Applicant Info
+  fullName: text("full_name").notNull(),
+  email: varchar("email").notNull(),
+  phone: varchar("phone").notNull(),
+  cnic: varchar("cnic"),
+  dateOfBirth: timestamp("date_of_birth"),
+  address: text("address").notNull(),
+  city: text("city").notNull(),
+  district: text("district").notNull(),
+  // Background
+  education: text("education"),
+  priorCraftExperience: text("prior_craft_experience"),
+  motivation: text("motivation"),
+  // Survey responses
+  surveyResponses: jsonb("survey_responses"),
+  // Status
+  status: text("status").notNull().default("pending"), // pending | approved | rejected | enrolled | completed | dropped
+  adminNotes: text("admin_notes"),
+  appliedAt: timestamp("applied_at").defaultNow().notNull(),
+  processedAt: timestamp("processed_at"),
+  processedBy: varchar("processed_by").references(() => users.id),
+  // Link to user account (created on approval)
+  userId: varchar("user_id").references(() => users.id),
+});
+
+// Registered Artisans (comprehensive profiles for work)
+export const registeredArtisans = pgTable("registered_artisans", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id),
+  applicationId: varchar("application_id").references(() => trainingApplications.id),
+  centerId: varchar("center_id").references(() => sanatzarCenters.id),
+  // Personal Info
+  fullName: text("full_name").notNull(),
+  email: varchar("email").notNull(),
+  phone: varchar("phone").notNull(),
+  cnic: varchar("cnic"),
+  dateOfBirth: timestamp("date_of_birth"),
+  profileImageUrl: text("profile_image_url"),
+  // Address
+  address: text("address").notNull(),
+  city: text("city").notNull(),
+  district: text("district").notNull(),
+  // Bio & Background
+  bio: text("bio"),
+  education: text("education"),
+  languages: text("languages").array(),
+  // Expertise & Experience
+  primaryCraft: text("primary_craft").notNull(),
+  craftsKnown: text("crafts_known").array(),
+  skillLevel: text("skill_level").notNull(), // beginner | intermediate | advanced | master
+  yearsExperience: integer("years_experience"),
+  trainingCompleted: text("training_completed").array(),
+  certificateUrls: text("certificate_urls").array(),
+  portfolioImages: text("portfolio_images").array(),
+  // Work Preferences
+  workPreference: text("work_preference").notNull(), // remote | center | both | part-time | full-time
+  preferredCenterId: varchar("preferred_center_id").references(() => sanatzarCenters.id),
+  availabilityHours: integer("availability_hours"),
+  availableDays: text("available_days").array(),
+  // Payment Info
+  paymentMethod: text("payment_method"), // bank | jazzcash | easypaisa
+  paymentDetails: jsonb("payment_details"),
+  // Survey responses
+  surveyResponses: jsonb("survey_responses"),
+  // Status & Earnings
+  status: text("status").notNull().default("pending"), // pending | active | inactive | suspended
+  totalEarnings: decimal("total_earnings", { precision: 10, scale: 2 }).default("0"),
+  completedOrders: integer("completed_orders").default(0),
+  rating: decimal("rating", { precision: 2, scale: 1 }),
+  // Vendor conversion
+  vendorConversionStatus: text("vendor_conversion_status").default("none"), // none | pending | approved | rejected
+  convertedStoreId: varchar("converted_store_id").references(() => stores.id),
+  // Timestamps
+  registeredAt: timestamp("registered_at").defaultNow().notNull(),
+  approvedAt: timestamp("approved_at"),
+  approvedBy: varchar("approved_by").references(() => users.id),
+});
+
+// Survey Questions (configurable for both training and artisan flows)
+export const surveyQuestions = pgTable("survey_questions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  type: text("type").notNull(), // training | artisan
+  question: text("question").notNull(),
+  questionType: text("question_type").notNull().default("text"), // text | textarea | select | radio | checkbox
+  options: jsonb("options"), // for select/radio/checkbox
+  required: boolean("required").notNull().default(false),
+  order: integer("order").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Insert schemas for training module
+export const insertSanatzarCenterSchema = createInsertSchema(sanatzarCenters).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertTrainingProgramTemplateSchema = createInsertSchema(trainingProgramTemplates).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertTrainingProgramSchema = createInsertSchema(trainingPrograms).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertTrainingApplicationSchema = createInsertSchema(trainingApplications).omit({
+  id: true,
+  appliedAt: true,
+  processedAt: true,
+  status: true,
+});
+
+export const insertRegisteredArtisanSchema = createInsertSchema(registeredArtisans).omit({
+  id: true,
+  registeredAt: true,
+  approvedAt: true,
+  status: true,
+  totalEarnings: true,
+  completedOrders: true,
+  vendorConversionStatus: true,
+});
+
+export const insertSurveyQuestionSchema = createInsertSchema(surveyQuestions).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Types for training module
+export type InsertSanatzarCenter = z.infer<typeof insertSanatzarCenterSchema>;
+export type SanatzarCenter = typeof sanatzarCenters.$inferSelect;
+
+export type InsertTrainingProgramTemplate = z.infer<typeof insertTrainingProgramTemplateSchema>;
+export type TrainingProgramTemplate = typeof trainingProgramTemplates.$inferSelect;
+
+export type InsertTrainingProgram = z.infer<typeof insertTrainingProgramSchema>;
+export type TrainingProgram = typeof trainingPrograms.$inferSelect;
+
+export type InsertTrainingApplication = z.infer<typeof insertTrainingApplicationSchema>;
+export type TrainingApplication = typeof trainingApplications.$inferSelect;
+
+export type InsertRegisteredArtisan = z.infer<typeof insertRegisteredArtisanSchema>;
+export type RegisteredArtisan = typeof registeredArtisans.$inferSelect;
+
+export type InsertSurveyQuestion = z.infer<typeof insertSurveyQuestionSchema>;
+export type SurveyQuestion = typeof surveyQuestions.$inferSelect;

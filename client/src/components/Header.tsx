@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
- 
+
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,10 +28,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 
- 
+
 
 export default function Header() {
-  const { user, isAuthenticated, isVendor, logout, isLoggingOut } = useAuth();
+  const { user, isAuthenticated, isVendor, isTrainee, isArtisan, logout, isLoggingOut } = useAuth();
   const isAdmin = user?.role === "admin";
   const isBuyer = user?.role === "buyer";
   const { theme, toggleTheme } = useTheme();
@@ -47,11 +47,11 @@ export default function Header() {
     queryKey: ["/api/categories"],
   });
   const giBrands = Array.from(new Set(categories.map(c => c.giBrand)));
- 
+
 
   useEffect(() => {
     setCartCount(getCartCount());
-    
+
     const handleCartUpdate = () => {
       setCartCount(getCartCount());
     };
@@ -60,7 +60,7 @@ export default function Header() {
     return () => window.removeEventListener('cart-updated', handleCartUpdate);
   }, []);
 
- 
+
 
   const handleLogout = () => {
     logout(undefined, {
@@ -205,19 +205,30 @@ export default function Header() {
                         </Link>
                       </NavigationMenuLink>
                       <NavigationMenuLink asChild>
-                          <Link href="/vendor/pricing">
-                            <span className="block rounded-md px-2 py-1.5 text-sm leading-snug hover:bg-muted" data-testid="link-pricing">Pricing</span>
-                          </Link>
+                        <Link href="/vendor/pricing">
+                          <span className="block rounded-md px-2 py-1.5 text-sm leading-snug hover:bg-muted" data-testid="link-pricing">Pricing</span>
+                        </Link>
                       </NavigationMenuLink>
                       <NavigationMenuLink asChild>
-                          <Link href="/vendor/guide">
-                            <span className="block rounded-md px-2 py-1.5 text-sm leading-snug hover:bg-muted" data-testid="link-seller-guide">Seller Guide</span>
-                          </Link>
+                        <Link href="/vendor/guide">
+                          <span className="block rounded-md px-2 py-1.5 text-sm leading-snug hover:bg-muted" data-testid="link-seller-guide">Seller Guide</span>
+                        </Link>
                       </NavigationMenuLink>
                       <NavigationMenuLink asChild>
-                          <Link href="/vendor/verification">
-                            <span className="block rounded-md px-2 py-1.5 text-sm leading-snug hover:bg-muted" data-testid="link-gi-verification">GI Verification</span>
-                          </Link>
+                        <Link href="/vendor/verification">
+                          <span className="block rounded-md px-2 py-1.5 text-sm leading-snug hover:bg-muted" data-testid="link-gi-verification">GI Verification</span>
+                        </Link>
+                      </NavigationMenuLink>
+                      <div className="col-span-2 border-t my-1" />
+                      <NavigationMenuLink asChild>
+                        <Link href="/training">
+                          <span className="block rounded-md px-2 py-1.5 text-sm leading-snug hover:bg-muted" data-testid="link-training">🎓 Training Programs</span>
+                        </Link>
+                      </NavigationMenuLink>
+                      <NavigationMenuLink asChild>
+                        <Link href="/artisan/register">
+                          <span className="block rounded-md px-2 py-1.5 text-sm leading-snug hover:bg-muted" data-testid="link-artisan-register">📝 Register as Artisan</span>
+                        </Link>
                       </NavigationMenuLink>
                     </div>
                   </NavigationMenuContent>
@@ -278,7 +289,7 @@ export default function Header() {
                 </form>
               </SheetContent>
             </Sheet>
-            
+
             <Button
               variant="ghost"
               size="icon"
@@ -304,7 +315,7 @@ export default function Header() {
                 )}
               </Button>
             </Link>
-            
+
             {isAuthenticated ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -362,6 +373,28 @@ export default function Header() {
                       <DropdownMenuSeparator />
                     </>
                   )}
+                  {isTrainee && (
+                    <>
+                      <DropdownMenuItem asChild>
+                        <Link href="/trainee/dashboard">
+                          <LayoutDashboard className="w-4 h-4 mr-2" />
+                          <span data-testid="link-trainee-dashboard">Trainee Dashboard</span>
+                        </Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
+                  {isArtisan && (
+                    <>
+                      <DropdownMenuItem asChild>
+                        <Link href="/artisan/dashboard">
+                          <LayoutDashboard className="w-4 h-4 mr-2" />
+                          <span data-testid="link-artisan-dashboard">Artisan Dashboard</span>
+                        </Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
                   <DropdownMenuItem onClick={handleLogout} disabled={isLoggingOut} data-testid="button-logout">
                     <LogOut className="w-4 h-4 mr-2" />
                     <span>{isLoggingOut ? "Logging out..." : "Logout"}</span>
@@ -376,7 +409,7 @@ export default function Header() {
           </div>
         </div>
 
-        
+
       </div>
 
       <AuthDialog

@@ -23,6 +23,10 @@ import AdminAnalytics from "@/pages/admin/Analytics";
 import AdminSettings from "@/pages/admin/Settings";
 import AdminStores from "@/pages/admin/Stores";
 import AdminCategories from "@/pages/admin/Categories";
+import AdminArtisans from "@/pages/admin/Artisans";
+import AdminTraining from "@/pages/admin/Training";
+import AdminDistricts from "@/pages/admin/Districts";
+import AdminCenters from "@/pages/admin/Centers";
 import BuyerDashboard from "@/pages/buyer/Dashboard";
 import NotFound from "@/pages/not-found";
 import Brand from "@/pages/Brand";
@@ -33,6 +37,13 @@ import Store from "@/pages/Store";
 import PrivacyPolicy from "@/pages/PrivacyPolicy";
 import Returns from "@/pages/Returns";
 import Terms from "@/pages/Terms";
+// Training Module
+import TrainingHome from "@/pages/training/Home";
+import TrainingPrograms from "@/pages/training/Programs";
+import TrainingCenters from "@/pages/training/Centers";
+import TrainingApply from "@/pages/training/Apply";
+// Artisan Module
+import ArtisanRegister from "@/pages/artisan/Register";
 
 function Router() {
   return (
@@ -57,6 +68,14 @@ function Router() {
       <Route path="/vendor/products" component={VendorProducts} />
       <Route path="/vendor/orders" component={VendorOrders} />
       <Route path="/vendor/store" component={VendorStore} />
+      {/* Training Module Routes */}
+      <Route path="/training" component={TrainingHome} />
+      <Route path="/training/programs" component={TrainingPrograms} />
+      <Route path="/training/centers" component={TrainingCenters} />
+      <Route path="/training/apply" component={TrainingApply} />
+      {/* Artisan Module Routes */}
+      <Route path="/artisan/register" component={ArtisanRegister} />
+      {/* Admin Routes */}
       <Route path="/admin/dashboard" component={AdminOverview} />
       <Route path="/admin/moderation" component={AdminModeration} />
       <Route path="/admin/users" component={AdminUsers} />
@@ -64,6 +83,10 @@ function Router() {
       <Route path="/admin/analytics" component={AdminAnalytics} />
       <Route path="/admin/stores" component={AdminStores} />
       <Route path="/admin/categories" component={AdminCategories} />
+      <Route path="/admin/artisans" component={AdminArtisans} />
+      <Route path="/admin/training" component={AdminTraining} />
+      <Route path="/admin/districts" component={AdminDistricts} />
+      <Route path="/admin/centers" component={AdminCenters} />
       <Route path="/admin/settings" component={AdminSettings} />
       <Route component={NotFound} />
     </Switch>

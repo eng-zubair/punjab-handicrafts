@@ -24,8 +24,12 @@ export function useAuth() {
           setLocation("/admin/dashboard");
         } else if (u?.role === "vendor") {
           setLocation("/vendor/dashboard");
+        } else if (u?.role === "trainee") {
+          setLocation("/trainee/dashboard");
+        } else if (u?.role === "artisan") {
+          setLocation("/artisan/dashboard");
         }
-      } catch {}
+      } catch { }
     },
   });
 
@@ -58,6 +62,8 @@ export function useAuth() {
     isVendor: user?.role === "vendor",
     isAdmin: user?.role === "admin",
     isBuyer: user?.role === "buyer",
+    isTrainee: user?.role === "trainee",
+    isArtisan: user?.role === "artisan",
     login: loginMutation.mutate,
     register: registerMutation.mutate,
     logout: logoutMutation.mutate,
