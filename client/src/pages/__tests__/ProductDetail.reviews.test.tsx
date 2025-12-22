@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ProductDetail from '@/pages/ProductDetail';
 import { ThemeProvider } from '@/components/ThemeProvider';
@@ -12,6 +13,9 @@ vi.mock('wouter', async () => {
     Link: (props: any) => <a {...props} />,
   };
 });
+
+vi.mock('@/components/Header', () => ({ default: () => <div data-testid="mock-header" /> }));
+vi.mock('@/components/Footer', () => ({ default: () => <div data-testid="mock-footer" /> }));
 
 function setup() {
   const client = new QueryClient({
@@ -62,14 +66,14 @@ function setup() {
 
   client.setQueryData([`/api/products/prod1`], product);
   client.setQueryData([`/api/stores/${product.storeId}`], store);
-  client.setQueryData([`/api/products/prod1/reviews`, { sort: 'newest' }], { reviews, stats });
+  client.setQueryData([`/api/products/prod1/reviews`, { sort: 'helpful' }], { reviews, stats });
   client.setQueryData([`/api/promotions/active-by-products`, { ids: 'prod1' }], []);
 
   return { client };
 }
 
 describe('ProductDetail reviews display', () => {
-  it('renders rating summary and review with name, text, date', () => {
+  it('renders rating summary, current sort indicator, and review content', () => {
     const { client } = setup();
     render(
       <ThemeProvider>
@@ -95,5 +99,49 @@ describe('ProductDetail reviews display', () => {
     expect(screen.getByText('4.5')).toBeDefined();
     expect(screen.getByText('Excellent quality and design.')).toBeDefined();
     expect(screen.getByText(/Ali Khan/)).toBeDefined();
+    expect(screen.getByTestId('badge-current-sort').textContent).toContain('Most Helpful');
+  });
+
+  it('shows rating distribution and verified badge', () => {
+    const { client } = setup();
+    render(
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <WishlistProvider>
+            <ProductDetail />
+          </WishlistProvider>
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    expect(screen.getByTestId('container-rating-distribution')).toBeDefined();
+    expect(screen.getByTestId('row-star-5')).toBeDefined();
+    expect(screen.getByTestId('badge-verified-rev1')).toBeDefined();
+  });
+
+  it('updates helpful count in real-time when voting', async () => {
+    const { client } = setup();
+    global.fetch = vi.fn(async (url: any, init?: any) => {
+      const u = typeof url === 'string' ? url : '';
+      if (u.includes('/api/reviews/rev1/vote') && init?.method === 'POST') {
+        return { ok: true, json: async () => ({ helpfulUp: 4, helpfulDown: 0 }) } as any;
+      }
+      return { ok: true, json: async () => ({}) } as any;
+    });
+    render(
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <WishlistProvider>
+            <ProductDetail />
+          </WishlistProvider>
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-helpful-rev1')).toBeDefined();
+    }, { timeout: 3000 });
+    const btn = screen.getByTestId('btn-helpful-rev1');
+    const user = userEvent.setup();
+    await user.click(btn);
+    expect(screen.getByText(/Helpful/).textContent).toContain('(4)');
   });
 });

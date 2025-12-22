@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useLocation, Link } from "wouter";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
@@ -15,7 +15,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { AlertCircle, ShoppingCart, Store, MapPin, Award, Minus, Plus, ArrowLeft, Star, RotateCcw, Link as LinkIcon } from "lucide-react";
+import { AlertCircle, ShoppingCart, Store, MapPin, Award, Minus, Plus, ArrowLeft, Star, RotateCcw, Link as LinkIcon, Truck, Wallet, ShieldCheck } from "lucide-react";
 import { useState, useEffect, useMemo, useRef } from "react";
 import type { Product, Variant } from "@shared/schema";
 import { addToCart } from "@/lib/cart";
@@ -34,6 +34,9 @@ import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from "reac
 import { SiWhatsapp, SiFacebook, SiX } from "react-icons/si";
 import RecentlyViewed from "@/components/RecentlyViewed";
 import { addRecentlyViewed } from "@/lib/recentlyViewed";
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
+import { Progress } from "@/components/ui/progress";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 if (typeof window !== "undefined" && typeof (window as any).ResizeObserver !== "function") {
   (window as any).ResizeObserver = class {
@@ -62,13 +65,16 @@ export default function ProductDetail() {
   const [rating, setRating] = useState(0);
   const [hoverRating, setHoverRating] = useState<number | null>(null);
   const [comment, setComment] = useState("");
-  const [sort, setSort] = useState<'newest' | 'highest' | 'helpful'>('newest');
+  const [sort, setSort] = useState<'newest' | 'highest' | 'helpful'>('helpful');
   const [newReviewId, setNewReviewId] = useState<string | null>(null);
   const [mediaFiles, setMediaFiles] = useState<FileList | null>(null);
   const [mediaType, setMediaType] = useState<'image' | 'video'>('image');
   const [selectedVariant, setSelectedVariant] = useState<Variant | null>(null);
   const [parsedVariants, setParsedVariants] = useState<Variant[]>([]);
   const zoomRef = useRef<ReactZoomPanPinchRef | null>(null);
+  const [accordionOpen, setAccordionOpen] = useState<string[]>([]);
+  const [votes, setVotes] = useState<Record<string, 'up' | 'down'>>({});
+  const rqClient = useQueryClient();
 
   const { data: product, isLoading: productLoading, isError: productError, error: productErrorData } = useQuery<Product>({
     queryKey: [`/api/products/${id}`],
@@ -108,6 +114,36 @@ export default function ProductDetail() {
     queryKey: [`/api/products/${id}/reviews`, { sort }],
     enabled: !!id,
   });
+
+  useEffect(() => {
+    try {
+      const val = localStorage.getItem('review_sort');
+      if (val === 'newest' || val === 'highest' || val === 'helpful') {
+        setSort(val);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('review_sort', sort);
+    } catch {}
+  }, [sort]);
+
+  const ratingDistribution = useMemo(() => {
+    const total = Number(reviewData?.stats.count ?? 0);
+    const buckets: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    (reviewData?.reviews ?? []).forEach((r) => {
+      const n = Math.max(1, Math.min(5, Math.round(Number(r.rating))));
+      buckets[n] = (buckets[n] || 0) + 1;
+    });
+    const items = [5, 4, 3, 2, 1].map((star) => {
+      const count = buckets[star] || 0;
+      const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+      return { star, count, pct };
+    });
+    return { total, items };
+  }, [reviewData]);
 
   // Compute variant SKUs from product variants for promo fetching
   const variantSkus = useMemo(() => {
@@ -197,6 +233,145 @@ export default function ProductDetail() {
       } catch {}
     }
   }, [product, selectedVariant, activePromotions, variantPromos]);
+
+  useEffect(() => {
+    try {
+      const key = product?.id ? `pdp-accordion:${product.id}` : null;
+      if (!key) return;
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const arr = JSON.parse(saved);
+        if (Array.isArray(arr)) setAccordionOpen(arr);
+      }
+    } catch {}
+  }, [product?.id]);
+
+  useEffect(() => {
+    try {
+      const key = product?.id ? `pdp-accordion:${product.id}` : null;
+      if (!key) return;
+      localStorage.setItem(key, JSON.stringify(accordionOpen));
+    } catch {}
+  }, [accordionOpen, product?.id]);
+
+  useEffect(() => {
+    if (!product) return;
+    if (typeof document === "undefined") return;
+    const previousTitle = document.title;
+    const head = document.head;
+    const sanitize = (value: string) => value.replace(/\s+/g, " ").replace(/"/g, "'").trim();
+    const titleParts: string[] = [];
+    titleParts.push(sanitize(product.title));
+    const attributeParts: string[] = [];
+    if (product.category) attributeParts.push(product.category);
+    if (product.giBrand) attributeParts.push(product.giBrand);
+    if (product.district) attributeParts.push(product.district);
+    if (attributeParts.length > 0) {
+      titleParts.push(sanitize(attributeParts.slice(0, 2).join(" • ")));
+    }
+    titleParts.push("Punjab Handicrafts");
+    const fullTitle = sanitize(titleParts.join(" | "));
+    document.title = fullTitle;
+    const stockSource = selectedVariant ? Number(selectedVariant.stock) : Number(product.stock || 0);
+    const availabilityText = stockSource > 0 ? "Available now" : "Currently out of stock";
+    const descriptionParts: string[] = [];
+    if (product.description) {
+      descriptionParts.push(product.description);
+    }
+    descriptionParts.push(`${availabilityText} from artisans in ${product.district}.`);
+    descriptionParts.push("Shop authentic Punjabi handicrafts on Punjab Handicrafts.");
+    const rawDescription = sanitize(descriptionParts.filter(Boolean).join(" "));
+    const metaDescription = rawDescription.length > 160 ? `${rawDescription.slice(0, 157)}...` : rawDescription;
+    const ogDescription = rawDescription.length > 300 ? `${rawDescription.slice(0, 297)}...` : rawDescription;
+    const shareUrl = getShareUrl();
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    const resolvePrimaryImage = () => {
+      const imgs = normalizeImagePaths(
+        selectedVariant?.images && selectedVariant.images.length > 0
+          ? selectedVariant.images
+          : product.images
+      );
+      const img = imgs[0];
+      if (!img) return null;
+      if (img.startsWith("http://") || img.startsWith("https://")) return img;
+      if (!origin) return img;
+      if (img.startsWith("/")) return `${origin}${img}`;
+      return `${origin}/${img}`;
+    };
+    const primaryImage = resolvePrimaryImage();
+    const basePrice = selectedVariant ? Number(selectedVariant.price) : Number(product.price);
+    const priceAmount = Number.isFinite(basePrice) ? basePrice.toFixed(0) : null;
+    const availabilityValue = stockSource > 0 ? "instock" : "oos";
+    const restoreCallbacks: Array<() => void> = [];
+    const upsertMeta = (identifier: { name?: string; property?: string }, content: string | null) => {
+      if (!content) return;
+      const selector = identifier.name
+        ? `meta[name="${identifier.name}"]`
+        : identifier.property
+        ? `meta[property="${identifier.property}"]`
+        : "";
+      if (!selector) return;
+      let el = head.querySelector(selector) as HTMLMetaElement | null;
+      let created = false;
+      const previousContent = el ? el.getAttribute("content") : null;
+      if (!el) {
+        el = document.createElement("meta");
+        if (identifier.name) el.setAttribute("name", identifier.name);
+        if (identifier.property) el.setAttribute("property", identifier.property);
+        head.appendChild(el);
+        created = true;
+      }
+      el.setAttribute("content", content);
+      restoreCallbacks.push(() => {
+        if (!el) return;
+        if (created) {
+          if (head.contains(el)) head.removeChild(el);
+        } else if (previousContent !== null) {
+          el.setAttribute("content", previousContent);
+        }
+      });
+    };
+    const upsertCanonicalLink = (href: string | null) => {
+      if (!href) return;
+      const selector = 'link[rel="canonical"]';
+      let el = head.querySelector(selector) as HTMLLinkElement | null;
+      let created = false;
+      const previousHref = el ? el.getAttribute("href") : null;
+      if (!el) {
+        el = document.createElement("link");
+        el.setAttribute("rel", "canonical");
+        head.appendChild(el);
+        created = true;
+      }
+      el.setAttribute("href", href);
+      restoreCallbacks.push(() => {
+        if (!el) return;
+        if (created) {
+          if (head.contains(el)) head.removeChild(el);
+        } else if (previousHref !== null) {
+          el.setAttribute("href", previousHref);
+        }
+      });
+    };
+    upsertMeta({ name: "description" }, metaDescription || null);
+    upsertMeta({ property: "og:title" }, fullTitle);
+    upsertMeta({ property: "og:description" }, ogDescription || null);
+    upsertMeta({ property: "og:type" }, "product");
+    upsertMeta({ property: "og:url" }, shareUrl);
+    if (primaryImage) {
+      upsertMeta({ property: "og:image" }, primaryImage);
+    }
+    if (priceAmount) {
+      upsertMeta({ property: "product:price:amount" }, priceAmount);
+      upsertMeta({ property: "product:price:currency" }, "PKR");
+    }
+    upsertMeta({ property: "product:availability" }, availabilityValue);
+    upsertCanonicalLink(shareUrl);
+    return () => {
+      document.title = previousTitle;
+      restoreCallbacks.forEach((fn) => fn());
+    };
+  }, [product, selectedVariant, id]);
 
   const handleQuantityChange = (delta: number) => {
     const maxStock = selectedVariant ? selectedVariant.stock : (product?.stock || 0);
@@ -948,59 +1123,117 @@ export default function ProductDetail() {
                 </div>
               </div>
 
-              <Separator />
-
-              {storeError ? (
-                <Alert variant="destructive" data-testid="alert-store-error">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Vendor Information Unavailable</AlertTitle>
-                  <AlertDescription>
-                    Unable to load vendor information. You can still view the product, but purchasing is temporarily unavailable.
-                  </AlertDescription>
-                </Alert>
-              ) : storeLoading ? (
-                <Card>
-                  <CardHeader>
-                    <div className="h-6 bg-muted/50 rounded animate-pulse w-32" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      <div className="h-4 bg-muted/50 rounded animate-pulse" />
-                      <div className="h-4 bg-muted/50 rounded animate-pulse w-3/4" />
-                    </div>
-                  </CardContent>
-                </Card>
-              ) : store ? (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Store className="w-5 h-5" />
-                      Vendor Information
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      <p className="font-semibold" data-testid="text-store-name">
-                        {store.name}
-                      </p>
-                      {store.description && (
-                        <p className="text-sm text-muted-foreground" data-testid="text-store-description">
-                          {store.description}
+              <Accordion
+                type="multiple"
+                value={accordionOpen}
+                onValueChange={(v) => setAccordionOpen(Array.isArray(v) ? v : [])}
+                className="rounded-lg border"
+                data-testid="accordion-pdp"
+              >
+                <AccordionItem value="trust" data-testid="accordion-item-trust">
+                  <AccordionTrigger aria-label="Toggle Delivery & Trust">
+                    <span className="flex items-center gap-2">
+                      <Truck className="w-5 h-5" />
+                      Delivery & Trust
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent className="space-y-4">
+                    <div className="flex items-start gap-2">
+                      <Truck className="w-4 h-4 text-muted-foreground" />
+                      <div className="text-sm">
+                        <div className="font-medium">Delivery Estimate</div>
+                        <p className="text-muted-foreground" data-testid="text-delivery-estimate">
+                          Standard: 2–5 business days • COD: 3–7 business days. Ships from {store?.district || product.district}.
                         </p>
-                      )}
-                      <p className="text-sm flex items-center gap-1" data-testid="text-store-district">
-                        <MapPin className="w-4 h-4" />
-                        {store.district}
-                      </p>
-                      <Link href={`/stores/${store.id}`}>
-                        <Button variant="ghost" className="px-0 h-auto" data-testid="button-view-store">
-                          View Store
-                        </Button>
-                      </Link>
+                      </div>
                     </div>
-                  </CardContent>
-                </Card>
-              ) : null}
+                    <div className="flex items-start gap-2">
+                      <RotateCcw className="w-4 h-4 text-muted-foreground" />
+                      <div className="text-sm">
+                        <div className="font-medium">Returns</div>
+                        <p className="text-muted-foreground" data-testid="text-returns-summary">30-day return window; items must be unused in original packaging.</p>
+                        <Link href="/returns">
+                          <Button variant="ghost" className="px-0 h-auto" data-testid="button-returns-policy">View policy</Button>
+                        </Link>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Wallet className="w-4 h-4 text-muted-foreground" />
+                      <div className="text-sm">
+                        <div className="font-medium">COD Rules</div>
+                        <p className="text-muted-foreground" data-testid="text-cod-rules">
+                          Phone required; availability depends on item and order value; repeated cancellations may restrict COD.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <ShieldCheck className="w-4 h-4 text-muted-foreground" />
+                      <div className="text-sm">
+                        <div className="font-medium">Artisan Authenticity</div>
+                        <p className="text-muted-foreground" data-testid="text-authenticity">
+                          GI brand: {product.giBrand}. Vendors undergo verification and documentation.
+                        </p>
+                        <Link href="/vendor/verification">
+                          <Button variant="ghost" className="px-0 h-auto" data-testid="button-verification-info">Verification process</Button>
+                        </Link>
+                      </div>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+                <AccordionItem value="vendor" data-testid="accordion-item-vendor">
+                  <AccordionTrigger aria-label="Toggle Meet Your Seller">
+                    <span className="flex items-center gap-2">
+                      <Store className="w-5 h-5" />
+                      Meet Your Seller
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    {storeError ? (
+                      <Alert variant="destructive" data-testid="alert-store-error">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertTitle>Vendor Information Unavailable</AlertTitle>
+                        <AlertDescription>
+                          Unable to load vendor information. You can still view the product, but purchasing is temporarily unavailable.
+                        </AlertDescription>
+                      </Alert>
+                    ) : storeLoading ? (
+                      <Card>
+                        <CardHeader>
+                          <div className="h-6 bg-muted/50 rounded animate-pulse w-32" />
+                        </CardHeader>
+                        <CardContent>
+                          <div className="space-y-2">
+                            <div className="h-4 bg-muted/50 rounded animate-pulse" />
+                            <div className="h-4 bg-muted/50 rounded animate-pulse w-3/4" />
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ) : store ? (
+                      <div className="space-y-2">
+                        <p className="font-semibold" data-testid="text-store-name">
+                          {store.name}
+                        </p>
+                        {store.description && (
+                          <p className="text-sm text-muted-foreground" data-testid="text-store-description">
+                            {store.description}
+                          </p>
+                        )}
+                        <p className="text-sm flex items-center gap-1" data-testid="text-store-district">
+                          <MapPin className="w-4 h-4" />
+                          {store.district}
+                        </p>
+                        <Link href={`/stores/${store.id}`}>
+                          <Button variant="ghost" className="px-0 h-auto" data-testid="button-view-store">
+                            View Store
+                          </Button>
+                        </Link>
+                      </div>
+                    ) : null}
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+
+              <Separator />
           </div>
         </div>
         {(() => {
@@ -1008,19 +1241,29 @@ export default function ProductDetail() {
             "@context": "https://schema.org",
             "@type": "Product",
             name: product.title,
-              image: images[0] || undefined,
-              description: product.description || undefined,
-              brand: { "@type": "Brand", name: product.giBrand },
-              offers: {
-                "@type": "Offer",
-                priceCurrency: "PKR",
-                price: discounted != null ? discounted : priceNum,
-                availability: product.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
-                priceValidUntil: endsAt || undefined,
-              }
-            };
-            return <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />;
-          })()}
+            image: images[0] || undefined,
+            description: product.description || undefined,
+            sku: selectedVariant?.sku || undefined,
+            brand: { "@type": "Brand", name: product.giBrand },
+            url: getShareUrl(),
+            aggregateRating: reviewData?.stats
+              ? {
+                  "@type": "AggregateRating",
+                  ratingValue: Number(reviewData.stats.average ?? 0).toFixed(1),
+                  reviewCount: reviewData.stats.count,
+                }
+              : undefined,
+            offers: {
+              "@type": "Offer",
+              priceCurrency: "PKR",
+              price: discounted != null ? discounted : priceNum,
+              availability: isOutOfStock ? "https://schema.org/OutOfStock" : "https://schema.org/InStock",
+              priceValidUntil: endsAt || undefined,
+              url: getShareUrl(),
+            },
+          };
+          return <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />;
+        })()}
           <div className="mt-10 space-y-6">
             <div className="flex items-center justify-between">
               <div className="space-y-1">
@@ -1035,6 +1278,35 @@ export default function ProductDetail() {
                 <option value="helpful">Most Helpful</option>
               </select>
             </div>
+            <div className="mt-4 flex items-center gap-2">
+              <Badge variant="secondary" data-testid="badge-current-sort">
+                {sort === 'helpful' ? 'Sorted by: Most Helpful' : sort === 'highest' ? 'Sorted by: Highest Rated' : 'Sorted by: Newest'}
+              </Badge>
+            </div>
+
+            {!reviewsLoading && !reviewsError && (reviewData?.stats.count ?? 0) > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4" aria-label="Rating distribution" data-testid="container-rating-distribution">
+                <div className="space-y-3">
+                  {ratingDistribution.items.map((it) => (
+                    <div key={it.star} className="flex items-center gap-3" data-testid={`row-star-${it.star}`}>
+                      <div className="w-24 text-sm">{it.star} stars</div>
+                      <div className="flex-1">
+                        <Progress value={it.pct} aria-label={`${it.star} stars`} />
+                      </div>
+                      <div className="w-16 text-right text-sm" aria-live="polite">{it.pct}%</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="rounded-md border p-3">
+                  <div className="flex items-center gap-2">
+                    <Star className="w-4 h-4 fill-yellow-500 text-yellow-500" />
+                    <span className="text-sm">Average</span>
+                    <span className="text-sm font-medium">{Number(reviewData?.stats.average ?? 0).toFixed(1)} / 5</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">{reviewData?.stats.count ?? 0} total reviews</p>
+                </div>
+              </div>
+            )}
 
             {reviewsError && (
               <Alert variant="destructive" data-testid="alert-reviews-error">
@@ -1084,7 +1356,7 @@ export default function ProductDetail() {
                         setRating(0); setComment("");
                         refetchReviews();
                         try {
-                          queryClient.invalidateQueries({ queryKey: ['/api/products'] });
+                          rqClient.invalidateQueries({ queryKey: ['/api/products'] });
                         } catch { }
                       } catch {
                         toast({ title: 'Error', description: 'Failed to submit review', variant: 'destructive' });
@@ -1133,6 +1405,7 @@ export default function ProductDetail() {
                 ))}
               </div>
             ) : (
+              <TooltipProvider>
               <div className="grid gap-4">
                 {(reviewData?.reviews ?? []).map((r) => (
                   <div key={r.id} className="border rounded-lg p-4">
@@ -1144,7 +1417,27 @@ export default function ProductDetail() {
                             return <span key={val} className={`w-5 h-5 ${Number(r.rating) >= val ? 'text-yellow-500' : 'text-muted-foreground'}`}>★</span>;
                           })}
                         </div>
-                        {r.verifiedPurchase && <Badge>Verified Purchase</Badge>}
+                        {r.verifiedPurchase && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge className="flex items-center gap-1" data-testid={`badge-verified-${r.id}`}>
+                                <ShieldCheck className="w-3 h-3" />
+                                Verified
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              Verified purchase based on order history
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                        {(() => {
+                          const max = Math.max(...(reviewData?.reviews ?? []).map((x) => Number(x.helpfulUp || 0) - Number(x.helpfulDown || 0)));
+                          const score = Number(r.helpfulUp || 0) - Number(r.helpfulDown || 0);
+                          if ((reviewData?.reviews ?? []).length > 0 && score === max && max > 0) {
+                            return <Badge variant="secondary" data-testid={`badge-most-helpful-${r.id}`}>Most Helpful</Badge>;
+                          }
+                          return null;
+                        })()}
                       </div>
                       <div className="text-sm text-muted-foreground">{r.reviewerName ? r.reviewerName : ''} • {new Date(r.createdAt).toLocaleDateString()}</div>
                     </div>
@@ -1164,29 +1457,44 @@ export default function ProductDetail() {
                     )}
                     <div className="mt-3 flex items-center gap-4">
                       <button
-                        className="text-sm text-primary"
+                        className={`text-sm ${votes[r.id] === 'up' ? 'text-primary font-medium' : 'text-primary'}`}
                         aria-label="Mark review helpful"
+                        data-testid={`btn-helpful-${r.id}`}
                         onClick={async () => {
                           try {
-                            await apiRequest('POST', `/api/reviews/${r.id}/vote`, { value: 'up' });
-                            refetchReviews();
+                            const res = await apiRequest('POST', `/api/reviews/${r.id}/vote`, { value: 'up' });
+                            const json = await res.json();
+                            setVotes((v) => ({ ...v, [r.id]: 'up' }));
+                            rqClient.setQueryData([`/api/products/${id}/reviews`, { sort }], (prev: any) => {
+                              if (!prev) return prev;
+                              const updated = (prev.reviews ?? []).map((x: any) => x.id === r.id ? { ...x, helpfulUp: Number(json?.helpfulUp ?? x.helpfulUp), helpfulDown: Number(json?.helpfulDown ?? x.helpfulDown) } : x);
+                              return { ...prev, reviews: updated };
+                            });
                           } catch { }
                         }}
-                      >Helpful ({r.helpfulUp})</button>
+                      >Helpful (<span aria-live="polite">{r.helpfulUp}</span>)</button>
                       <button
-                        className="text-sm text-muted-foreground"
+                        className={`text-sm ${votes[r.id] === 'down' ? 'text-muted-foreground font-medium' : 'text-muted-foreground'}`}
                         aria-label="Mark review unhelpful"
+                        data-testid={`btn-unhelpful-${r.id}`}
                         onClick={async () => {
                           try {
-                            await apiRequest('POST', `/api/reviews/${r.id}/vote`, { value: 'down' });
-                            refetchReviews();
+                            const res = await apiRequest('POST', `/api/reviews/${r.id}/vote`, { value: 'down' });
+                            const json = await res.json();
+                            setVotes((v) => ({ ...v, [r.id]: 'down' }));
+                            rqClient.setQueryData([`/api/products/${id}/reviews`, { sort }], (prev: any) => {
+                              if (!prev) return prev;
+                              const updated = (prev.reviews ?? []).map((x: any) => x.id === r.id ? { ...x, helpfulUp: Number(json?.helpfulUp ?? x.helpfulUp), helpfulDown: Number(json?.helpfulDown ?? x.helpfulDown) } : x);
+                              return { ...prev, reviews: updated };
+                            });
                           } catch { }
                         }}
-                      >Not Helpful ({r.helpfulDown})</button>
+                      >Not Helpful (<span aria-live="polite">{r.helpfulDown}</span>)</button>
                     </div>
                   </div>
                 ))}
               </div>
+              </TooltipProvider>
             )}
           </div>
         </div>

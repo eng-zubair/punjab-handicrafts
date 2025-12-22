@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Store, Star } from "lucide-react";
 import DistrictBadge from "./DistrictBadge";
 import { Link } from "wouter";
+import { useState } from "react";
 
 interface VendorCardProps {
   id: string;
@@ -31,13 +32,27 @@ export default function VendorCard({
     .join('')
     .toUpperCase()
     .slice(0, 2);
+  const [avatarLoaded, setAvatarLoaded] = useState(false);
 
   return (
     <Card className="hover-elevate active-elevate-2" data-testid={`card-vendor-${id}`}>
       <CardContent className="p-6">
         <div className="flex items-start gap-4">
           <Avatar className="w-16 h-16">
-            <AvatarImage src={avatar} alt={name} />
+            <AvatarImage
+              src={avatar}
+              alt={name}
+              loading="lazy"
+              decoding="async"
+              width={64}
+              height={64}
+              onLoad={() => setAvatarLoaded(true)}
+              onError={() => setAvatarLoaded(true)}
+              className={avatarLoaded ? undefined : "opacity-0"}
+            />
+            {!avatarLoaded && (
+              <div className="absolute inset-0 rounded-full bg-muted/50 animate-pulse" aria-hidden="true" />
+            )}
             <AvatarFallback>{initials}</AvatarFallback>
           </Avatar>
           <div className="flex-1 min-w-0">

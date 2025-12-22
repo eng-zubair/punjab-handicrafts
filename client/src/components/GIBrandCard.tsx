@@ -2,6 +2,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Award } from "lucide-react";
 import { useLocation } from "wouter";
 import { toSlug } from "@/lib/utils";
+import { useState } from "react";
 
 interface GIBrandCardProps {
   giBrand: string;
@@ -12,6 +13,7 @@ interface GIBrandCardProps {
 
 export default function GIBrandCard({ giBrand, district, image, craftCount }: GIBrandCardProps) {
   const [, setLocation] = useLocation();
+  const [imageLoaded, setImageLoaded] = useState(false);
 
   const handleExplore = () => {
     setLocation(`/brands/${toSlug(giBrand)}`);
@@ -27,8 +29,17 @@ export default function GIBrandCard({ giBrand, district, image, craftCount }: GI
         <img
           src={image}
           alt={giBrand}
-          className="w-full h-full object-cover"
+          loading="lazy"
+          decoding="async"
+          width={400}
+          height={300}
+          onLoad={() => setImageLoaded(true)}
+          onError={() => setImageLoaded(true)}
+          className={"w-full h-full object-cover " + (imageLoaded ? "opacity-100" : "opacity-0")}
         />
+        {!imageLoaded && (
+          <div className="absolute inset-0 bg-muted/50 animate-pulse" aria-hidden="true" />
+        )}
       </div>
       <CardContent className="p-4">
         <div className="flex items-center gap-2">

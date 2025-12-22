@@ -31,7 +31,6 @@ export default function Checkout() {
   const [shippingProvince, setShippingProvince] = useState("");
   const [shippingPostalCode, setShippingPostalCode] = useState("");
   const [shippingCountry, setShippingCountry] = useState("Pakistan");
-  const [shippingAddress, setShippingAddress] = useState("");
   const [shippingMethod, setShippingMethod] = useState<string>("standard");
   const [specialInstructions, setSpecialInstructions] = useState("");
   const [billingSame, setBillingSame] = useState(true);
@@ -58,6 +57,16 @@ export default function Checkout() {
   const [placedOrderVendors, setPlacedOrderVendors] = useState<Array<{ storeId: string; storeName?: string; vendorId: string }>>([]);
   const [receiptData, setReceiptData] = useState<any | null>(null);
 
+  const fullShippingAddress = useMemo(() => {
+    const lines: string[] = [];
+    const line1 = [shippingStreet, shippingApartment].filter(Boolean).join(", ");
+    if (line1) lines.push(line1);
+    const line2 = [shippingCity, shippingProvince, shippingPostalCode].filter(Boolean).join(", ");
+    if (line2) lines.push(line2);
+    if (shippingCountry) lines.push(shippingCountry);
+    return lines.join("\n");
+  }, [shippingStreet, shippingApartment, shippingCity, shippingProvince, shippingPostalCode, shippingCountry]);
+
   useEffect(() => {
     setCartItems(getCart());
     const handleCartUpdate = () => setCartItems(getCart());
@@ -78,11 +87,10 @@ export default function Checkout() {
           if (data.shippingApartment) setShippingApartment(data.shippingApartment);
           if (data.shippingCity) setShippingCity(data.shippingCity);
           if (data.shippingProvince) setShippingProvince(data.shippingProvince);
-          if (data.shippingPostalCode) setShippingPostalCode(data.shippingPostalCode);
-          if (data.shippingCountry) setShippingCountry(data.shippingCountry);
-          if (data.shippingAddress) setShippingAddress(data.shippingAddress);
-        }
-      })
+        if (data.shippingPostalCode) setShippingPostalCode(data.shippingPostalCode);
+        if (data.shippingCountry) setShippingCountry(data.shippingCountry);
+      }
+    })
       .catch(() => {
         // Ignore errors, just don't autofill
       });
@@ -112,7 +120,6 @@ export default function Checkout() {
     setCalcLoading(true);
     apiRequest("POST", "/api/checkout/calculate", {
       items,
-      shippingAddress,
       shippingStreet,
       shippingCity,
       shippingProvince,
@@ -138,7 +145,7 @@ export default function Checkout() {
         setTotalCalc(localSubtotal);
       })
       .finally(() => setCalcLoading(false));
-  }, [cartItems, shippingAddress, shippingStreet, shippingCity, shippingProvince, shippingPostalCode, shippingCountry, shippingMethod]);
+  }, [cartItems, shippingStreet, shippingCity, shippingProvince, shippingPostalCode, shippingCountry, shippingMethod]);
 
   const handleProceedToReview = () => {
     const errs: Record<string, string> = {};
@@ -185,18 +192,20 @@ export default function Checkout() {
         variantSku: i.variant?.sku,
         variantAttributes: i.variant ? { type: i.variant.type, option: i.variant.option } : undefined,
       }));
-      console.info('Checkout placing order', {
-        paymentMethod,
-        shippingAddress,
-        phoneNumber,
-        items,
-        clientTotal: total.toFixed(2),
-      });
+      if (import.meta.env.DEV) {
+        console.info('Checkout placing order', {
+          paymentMethod,
+          shippingAddress: fullShippingAddress,
+          phoneNumber,
+          items,
+          clientTotal: total.toFixed(2),
+        });
+      }
       const res = await apiRequest("POST", "/api/orders", {
         total: total.toFixed(2),
         status: "pending",
         paymentMethod,
-        shippingAddress,
+        shippingAddress: fullShippingAddress,
         phoneNumber,
         preferredCommunication: 'in_app',
         recipientName,
@@ -359,9 +368,9 @@ export default function Checkout() {
                       </div>
                     </div>
                     <Textarea
-                      placeholder="Full shipping address"
-                      value={shippingAddress}
-                      onChange={(e) => setShippingAddress(e.target.value)}
+                      placeholder="Full shipping address (auto-generated)"
+                      value={fullShippingAddress}
+                      readOnly
                       className="min-h-24"
                       data-testid="input-address"
                     />
@@ -489,7 +498,7 @@ export default function Checkout() {
                     </div>
                     <div className="space-y-2">
                       <div className="text-sm text-muted-foreground">Ship to</div>
-                      <div className="font-medium whitespace-pre-line">{shippingAddress || "No address provided"}</div>
+                      <div className="font-medium whitespace-pre-line">{fullShippingAddress || "No address provided"}</div>
                       {phoneNumber && (
                         <div className="flex items-center gap-2 text-sm">
                           <Phone className="w-4 h-4" />
@@ -558,7 +567,7 @@ export default function Checkout() {
                     shippingMethod: placedOrder?.shippingMethod ?? orderDetails?.shippingMethod ?? shippingMethod ?? null,
                     estimatedDelivery: estimatedDelivery || null,
                     buyer: { email: recipientEmail || undefined, firstName: recipientName ? recipientName.split(' ')[0] : undefined, lastName: recipientName ? recipientName.split(' ').slice(1).join(' ') || undefined : undefined, phone: phoneNumber || undefined } as any,
-                    shippingAddress: placedOrder?.shippingAddress ?? orderDetails?.shippingAddress ?? shippingAddress ?? null,
+                    shippingAddress: placedOrder?.shippingAddress ?? orderDetails?.shippingAddress ?? fullShippingAddress ?? null,
                     items: (orderDetails?.items && Array.isArray(orderDetails.items) && orderDetails.items.length > 0)
                       ? orderDetails.items.map((it: any) => {
                           const vMap = new Map(placedOrderVendors.map(v => [v.storeId, v.storeName || v.storeId]));
