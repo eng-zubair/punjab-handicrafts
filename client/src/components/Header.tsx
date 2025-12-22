@@ -10,8 +10,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { ShoppingCart, User, Menu, Moon, Sun, Store, LayoutDashboard, LogOut, ShieldCheck, Award, Search } from "lucide-react";
-import { useState, useEffect } from "react";
+import { ShoppingCart, User, Menu, Moon, Sun, Store, LayoutDashboard, LogOut, ShieldCheck, Award, Search, Heart } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { toSlug } from "@/lib/utils";
 import { getCartCount } from "@/lib/cart";
@@ -27,6 +27,8 @@ import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
+import { useWishlist } from "@/components/WishlistContext";
+import { apiRequest } from "@/lib/queryClient";
 
 
 
@@ -37,11 +39,17 @@ export default function Header() {
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
   const [cartCount, setCartCount] = useState(0);
+  const { items: wishlistItems, count: wishlistCount, replace: replaceWishlist } = useWishlist();
 
   const [, setLocation] = useLocation();
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
   const [authDialogTab, setAuthDialogTab] = useState<"login" | "register">("login");
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const listboxId = "header-search-suggestions";
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const { data: categories = [] } = useQuery<Category[]>({
     queryKey: ["/api/categories"],
@@ -60,7 +68,35 @@ export default function Header() {
     return () => window.removeEventListener('cart-updated', handleCartUpdate);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function syncWishlist() {
+      if (!isAuthenticated) return;
+      try {
+        await apiRequest("POST", "/api/wishlist/sync", { productIds: wishlistItems });
+        const res = await apiRequest("GET", "/api/wishlist");
+        const ids: string[] = await res.json();
+        if (!cancelled) replaceWishlist(ids);
+      } catch {}
+    }
+    syncWishlist();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated]);
 
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedQuery(searchQuery.trim());
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  const { data: suggestionsResp, isFetching: isSuggestionsLoading, isError: isSuggestionsError } = useQuery<{ suggestions: Array<{ id: string; title: string; giBrand: string; category: string; district: string; image: string | null }>; metrics?: any }>({
+    queryKey: ["/api/search/suggestions", { q: debouncedQuery }],
+    enabled: debouncedQuery.length >= 2,
+  });
+  const suggestions = suggestionsResp?.suggestions ?? [];
 
   const handleLogout = () => {
     logout(undefined, {
@@ -97,6 +133,42 @@ export default function Header() {
     setLocation(q ? `/products?search=${encodeURIComponent(q)}` : "/products");
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!isOpen && e.key !== "Escape") {
+      setIsOpen(true);
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightedIndex((prev) => {
+        const next = prev + 1;
+        return next >= suggestions.length ? suggestions.length - 1 : next;
+      });
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightedIndex((prev) => {
+        const next = prev - 1;
+        return next < 0 ? -1 : next;
+      });
+    } else if (e.key === "Enter") {
+      if (highlightedIndex >= 0 && highlightedIndex < suggestions.length) {
+        const s = suggestions[highlightedIndex];
+        setLocation(`/products/${s.id}`);
+        setIsOpen(false);
+      } else {
+        handleSearchSubmit(e as any);
+      }
+    } else if (e.key === "Escape") {
+      setIsOpen(false);
+    }
+  };
+
+  const handleSuggestionClick = (index: number) => {
+    const s = suggestions[index];
+    if (!s) return;
+    setSearchQuery(s.title);
+    setLocation(`/products/${s.id}`);
+    setIsOpen(false);
+  };
 
   return (
     <header className="sticky top-0 z-50 bg-background border-b">
@@ -235,18 +307,63 @@ export default function Header() {
                 </NavigationMenuItem>
               </NavigationMenuList>
             </NavigationMenu>
-            <form onSubmit={handleSearchSubmit} className="ml-auto">
+            <form onSubmit={handleSearchSubmit} className="ml-auto" role="search">
               <div className="relative w-[260px] lg:w-[360px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
                   type="search"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  onFocus={() => setIsOpen(true)}
+                  onBlur={() => setTimeout(() => setIsOpen(false), 150)}
+                  onKeyDown={handleKeyDown}
+                  ref={inputRef}
                   placeholder="Search the Handicrafts"
                   aria-label="Search the Handicrafts"
+                  aria-autocomplete="list"
+                  aria-controls={listboxId}
+                  aria-expanded={isOpen}
+                  aria-activedescendant={highlightedIndex >= 0 ? `${listboxId}-item-${highlightedIndex}` : undefined}
                   className="pl-9"
                   data-testid="input-header-search"
                 />
+                {isOpen && (isSuggestionsLoading || suggestions.length > 0 || isSuggestionsError) && (
+                  <div className="absolute left-0 right-0 top-full mt-1 bg-popover border rounded-md shadow-md z-50">
+                    {isSuggestionsLoading ? (
+                      <div className="p-3 text-sm text-muted-foreground">Loading…</div>
+                    ) : isSuggestionsError ? (
+                      <div className="p-3 text-sm text-destructive">Failed to load suggestions</div>
+                    ) : suggestions.length === 0 ? (
+                      <div className="p-3 text-sm text-muted-foreground">No suggestions</div>
+                    ) : (
+                      <ul id={listboxId} role="listbox" aria-label="Search suggestions" className="py-1 max-h-[300px] overflow-auto">
+                        {suggestions.map((s, idx) => {
+                          const isActive = idx === highlightedIndex;
+                          return (
+                            <li
+                              id={`${listboxId}-item-${idx}`}
+                              key={s.id}
+                              role="option"
+                              aria-selected={isActive}
+                              className={`px-3 py-2 text-sm cursor-pointer ${isActive ? 'bg-muted' : 'hover:bg-muted'}`}
+                              onMouseEnter={() => setHighlightedIndex(idx)}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => handleSuggestionClick(idx)}
+                            >
+                              <div className="flex items-center gap-3">
+                                {s.image ? <img src={s.image} alt="" className="w-8 h-8 rounded object-cover" /> : <div className="w-8 h-8 rounded bg-muted" />}
+                                <div className="min-w-0">
+                                  <div className="font-medium truncate">{s.title}</div>
+                                  <div className="text-xs text-muted-foreground truncate">{[s.giBrand, s.category, s.district].filter(Boolean).join(" • ")}</div>
+                                </div>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                )}
               </div>
             </form>
           </div>
@@ -276,10 +393,54 @@ export default function Header() {
                       type="search"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
+                      onFocus={() => setIsOpen(true)}
+                      onBlur={() => setTimeout(() => setIsOpen(false), 150)}
+                      onKeyDown={handleKeyDown}
                       placeholder="Search the Handicrafts"
                       aria-label="Search the Handicrafts"
+                      aria-autocomplete="list"
+                      aria-controls={listboxId}
+                      aria-expanded={isOpen}
+                      aria-activedescendant={highlightedIndex >= 0 ? `${listboxId}-item-${highlightedIndex}` : undefined}
                       className="pl-9"
                     />
+                    {isOpen && (isSuggestionsLoading || suggestions.length > 0 || isSuggestionsError) && (
+                      <div className="absolute left-0 right-0 top-full mt-1 bg-popover border rounded-md shadow-md z-50">
+                        {isSuggestionsLoading ? (
+                          <div className="p-3 text-sm text-muted-foreground">Loading…</div>
+                        ) : isSuggestionsError ? (
+                          <div className="p-3 text-sm text-destructive">Failed to load suggestions</div>
+                        ) : suggestions.length === 0 ? (
+                          <div className="p-3 text-sm text-muted-foreground">No suggestions</div>
+                        ) : (
+                          <ul id={listboxId} role="listbox" aria-label="Search suggestions" className="py-1 max-h-[300px] overflow-auto">
+                            {suggestions.map((s, idx) => {
+                              const isActive = idx === highlightedIndex;
+                              return (
+                                <li
+                                  id={`${listboxId}-item-${idx}`}
+                                  key={s.id}
+                                  role="option"
+                                  aria-selected={isActive}
+                                  className={`px-3 py-2 text-sm cursor-pointer ${isActive ? 'bg-muted' : 'hover:bg-muted'}`}
+                                  onMouseEnter={() => setHighlightedIndex(idx)}
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => handleSuggestionClick(idx)}
+                                >
+                                  <div className="flex items-center gap-3">
+                                    {s.image ? <img src={s.image} alt="" className="w-8 h-8 rounded object-cover" /> : <div className="w-8 h-8 rounded bg-muted" />}
+                                    <div className="min-w-0">
+                                      <div className="font-medium truncate">{s.title}</div>
+                                      <div className="text-xs text-muted-foreground truncate">{[s.giBrand, s.category, s.district].filter(Boolean).join(" • ")}</div>
+                                    </div>
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="mt-3 flex justify-end">
                     <SheetClose asChild>
@@ -311,6 +472,22 @@ export default function Header() {
                     style={{ backgroundColor: '#e63946' }}
                   >
                     {cartCount > 9 ? '9+' : cartCount}
+                  </Badge>
+                )}
+              </Button>
+            </Link>
+            <Link href="/wishlist">
+              <Button variant="ghost" size="icon" className="relative" data-testid="button-wishlist" aria-label="Wishlist">
+                <Heart className="w-5 h-5" />
+                {wishlistCount > 0 && (
+                  <Badge
+                    variant="destructive"
+                    className="absolute -top-1.5 -right-0 z-[100] rounded-full min-w-[20px] h-[20px] flex items-center justify-center px-[5px] text-[11px] font-bold leading-none shadow-md border-2 border-background"
+                    data-testid="badge-wishlist-count"
+                    aria-label={`Wishlist items: ${wishlistCount}`}
+                    style={{ backgroundColor: '#e63946' }}
+                  >
+                    {wishlistCount > 9 ? '9+' : wishlistCount}
                   </Badge>
                 )}
               </Button>

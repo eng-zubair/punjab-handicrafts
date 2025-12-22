@@ -12,6 +12,8 @@ import { Slider } from "@/components/ui/slider";
 import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle, SheetFooter, SheetClose } from "@/components/ui/sheet";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { SlidersHorizontal, X, Search, AlertCircle } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { badgeVariants } from "@/components/ui/badge";
 import bahawalpurImage from '@assets/generated_images/Bahawalpur_Ralli_quilts_display_07a38e65.png';
 import lahoreImage from '@assets/generated_images/Lahore_jewelry_and_embroidery_39a642f1.png';
 import khussaImage from '@assets/generated_images/Handmade_khussa_footwear_product_06baa0d0.png';
@@ -32,6 +34,7 @@ export default function Products() {
   const [giBrand, setGiBrand] = useState<string>("all");
   const [priceRange, setPriceRange] = useState<[number, number]>([0, 10000]);
   const [page, setPage] = useState(1);
+  const [sort, setSort] = useState<string>("newest");
   const pageSize = 12;
 
   const { data: categoriesData } = useQuery<Category[]>({
@@ -89,6 +92,79 @@ export default function Products() {
 
   const hasActiveFilters = search || district !== 'all' || giBrand !== 'all' || priceRange[0] > 0 || priceRange[1] < 10000;
 
+  type ActiveFilter =
+    | { key: "search"; label: string; value: string }
+    | { key: "district"; label: string; value: string }
+    | { key: "giBrand"; label: string; value: string }
+    | { key: "priceRange"; label: string; value: [number, number] };
+
+  const activeFilters: ActiveFilter[] = useMemo(() => {
+    const chips: ActiveFilter[] = [];
+    if (search.trim()) chips.push({ key: "search", label: "Search", value: search.trim() });
+    if (district !== "all") chips.push({ key: "district", label: "District", value: district });
+    if (giBrand !== "all") chips.push({ key: "giBrand", label: "GI Brand", value: giBrand });
+    if (priceRange[0] > 0 || priceRange[1] < 10000) chips.push({ key: "priceRange", label: "Price", value: priceRange });
+    return chips;
+  }, [search, district, giBrand, priceRange]);
+
+  const removeFilter = (key: ActiveFilter["key"]) => {
+    if (key === "search") setSearch("");
+    else if (key === "district") setDistrict("all");
+    else if (key === "giBrand") setGiBrand("all");
+    else if (key === "priceRange") setPriceRange([0, 10000]);
+    setPage(1);
+  };
+
+  const ActiveFilterChips = () => (
+    <div
+      className="flex flex-wrap items-center gap-2"
+      aria-label="Active filters"
+      data-testid="chips-active-filters"
+    >
+      <AnimatePresence initial={false}>
+        {activeFilters.map((f) => {
+          const labelText =
+            f.key === "priceRange"
+              ? `${f.label}: PKR ${(f.value as [number, number])[0]} - ${(f.value as [number, number])[1]}`
+              : `${f.label}: ${String(f.value)}`;
+          return (
+            <motion.button
+              key={`${f.key}-${labelText}`}
+              type="button"
+              onClick={() => removeFilter(f.key)}
+              aria-label={`Remove filter ${labelText}`}
+              className={`${badgeVariants({ variant: "outline" })} inline-flex items-center gap-1.5 px-2.5 py-1 text-xs leading-none transition-all duration-200 ease-out hover:bg-muted hover:border-muted-foreground/30`}
+              initial={{ opacity: 0, scale: 0.95, y: -4 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -4 }}
+              layout
+              data-testid={`chip-${f.key}`}
+            >
+              <span>{labelText}</span>
+              <span
+                aria-hidden="true"
+                className="ml-1 inline-flex items-center justify-center rounded-sm"
+              >
+                <X className="w-3 h-3" />
+              </span>
+            </motion.button>
+          );
+        })}
+      </AnimatePresence>
+      {activeFilters.length > 0 && (
+        <button
+          type="button"
+          onClick={handleResetFilters}
+          className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline ml-1"
+          aria-label="Clear all filters"
+          data-testid="button-clear-all-filters"
+        >
+          Clear all
+        </button>
+      )}
+    </div>
+  );
+
   const featuredProducts = productsData?.products.map(product => {
     const normalizedImage = product.images[0] ? (product.images[0].startsWith('/') ? product.images[0] : `/${product.images[0]}`) : '';
     const promo = promoMap.get(product.id);
@@ -133,6 +209,37 @@ export default function Products() {
   }) || [];
 
   const giBrands = categoriesData?.map(cat => cat.giBrand) || [];
+
+  const sortedProducts = useMemo(() => {
+    const arr = [...featuredProducts];
+    if (sort === "price_asc") {
+      return arr.sort((a, b) => {
+        const ap = a.discountedPrice ?? a.price;
+        const bp = b.discountedPrice ?? b.price;
+        return ap - bp;
+      });
+    }
+    if (sort === "price_desc") {
+      return arr.sort((a, b) => {
+        const ap = a.discountedPrice ?? a.price;
+        const bp = b.discountedPrice ?? b.price;
+        return bp - ap;
+      });
+    }
+    if (sort === "rating") {
+      return arr.sort((a, b) => {
+        if (b.ratingAverage !== a.ratingAverage) return b.ratingAverage - a.ratingAverage;
+        return b.ratingCount - a.ratingCount;
+      });
+    }
+    if (sort === "best_selling") {
+      return arr.sort((a, b) => {
+        if (b.ratingCount !== a.ratingCount) return b.ratingCount - a.ratingCount;
+        return b.ratingAverage - a.ratingAverage;
+      });
+    }
+    return arr;
+  }, [featuredProducts, sort]);
 
   useEffect(() => {
     const qs = location.includes("?") ? location.split("?")[1] : "";
@@ -282,21 +389,34 @@ export default function Products() {
                 <p className="text-sm text-muted-foreground" data-testid="text-results-count">
                   {productsData?.pagination.total || 0} products found
                 </p>
-                <div className="lg:hidden">
-                  <Sheet>
-                    <SheetTrigger asChild>
-                      <Button variant="outline" size="sm" data-testid="button-open-filters">
-                        <SlidersHorizontal className="w-4 h-4 mr-2" />
-                        Filters
-                      </Button>
-                    </SheetTrigger>
-                    <SheetContent side="bottom">
-                      <SheetHeader>
-                        <SheetTitle>Filters</SheetTitle>
-                      </SheetHeader>
-                      <div className="p-4 space-y-4">
-                        <FiltersForm />
-                        <div className="flex items-center justify-end gap-2">
+                <div className="flex items-center gap-3">
+                  <Select value={sort} onValueChange={(v) => setSort(v)}>
+                    <SelectTrigger aria-label="Sort by" className="w-40 sm:w-48" data-testid="select-sort">
+                      <SelectValue placeholder="Sort: Newest" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="newest">Newest</SelectItem>
+                      <SelectItem value="price_asc">Price: Low to High</SelectItem>
+                      <SelectItem value="price_desc">Price: High to Low</SelectItem>
+                      <SelectItem value="rating">Rating</SelectItem>
+                      <SelectItem value="best_selling">Best Selling</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <div className="lg:hidden">
+                    <Sheet>
+                      <SheetTrigger asChild>
+                        <Button variant="outline" size="sm" data-testid="button-open-filters">
+                          <SlidersHorizontal className="w-4 h-4 mr-2" />
+                          Filters
+                        </Button>
+                      </SheetTrigger>
+                      <SheetContent side="bottom">
+                        <SheetHeader>
+                          <SheetTitle>Filters</SheetTitle>
+                        </SheetHeader>
+                        <div className="p-4 space-y-4">
+                          <FiltersForm />
+                          <div className="flex items-center justify-end gap-2">
                           {hasActiveFilters && (
                             <Button 
                               variant="ghost" 
@@ -311,19 +431,24 @@ export default function Products() {
                           <SheetClose asChild>
                             <Button size="sm" data-testid="button-apply-filters">Apply</Button>
                           </SheetClose>
+                          </div>
                         </div>
-                      </div>
-                      <SheetFooter />
-                    </SheetContent>
-                  </Sheet>
-                </div>
+                        <SheetFooter />
+                      </SheetContent>
+                    </Sheet>
+                  </div>
               </div>
+            </div>
 
-              {isError ? (
-                <Alert variant="destructive" data-testid="alert-error">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Error Loading Products</AlertTitle>
-                  <AlertDescription>
+            {activeFilters.length > 0 && (
+              <ActiveFilterChips />
+            )}
+
+            {isError ? (
+              <Alert variant="destructive" data-testid="alert-error">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Error Loading Products</AlertTitle>
+                <AlertDescription>
                     {error instanceof Error ? error.message : "Failed to load products. Please try again."}
                   </AlertDescription>
                   <Button 
@@ -362,7 +487,7 @@ export default function Products() {
               ) : (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {featuredProducts.map((product) => (
+                    {sortedProducts.map((product) => (
                       <ProductCard key={product.id} {...product} />
                     ))}
                   </div>

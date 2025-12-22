@@ -84,15 +84,13 @@ export default function TrainingApply() {
         queryKey: ["/api/categories"],
     });
 
-    const { data: programsData } = useQuery<{ programs: TrainingProgram[] }>({
+    const { data: programs = [] } = useQuery<TrainingProgram[]>({
         queryKey: ["/api/training-programs"],
     });
 
     const { data: surveyQuestions = [] } = useQuery<SurveyQuestion[]>({
         queryKey: ["/api/survey-questions", "training"],
     });
-
-    const programs = programsData?.programs || [];
 
     // Filter options based on selection
     const districts = useMemo(() => {
@@ -113,7 +111,7 @@ export default function TrainingApply() {
     // Submit mutation
     const submitMutation = useMutation({
         mutationFn: async (data: TrainingApplyFormData) => {
-            const res = await apiRequest("POST", "/api/training-applications", data);
+            const res = await apiRequest("POST", "/api/training/applications", data);
             return res.json();
         },
         onSuccess: () => {

@@ -3,9 +3,9 @@ import express from "express";
 import { createServer, type Server } from "http";
 import passport from "passport";
 import { storage } from "./storage";
-import { reviews, users, promotionProductHistory, promotionProducts, promotions, promotionRules, promotionActions, taxRules, shippingRateRules, platformSettings, configAudits, productVariants, sanatzarCenters, trainingPrograms, trainingApplications, registeredArtisans, surveyQuestions, categories } from "@shared/schema";
+import { reviews, users, promotionProductHistory, promotionProducts, promotions, promotionRules, promotionActions, taxRules, shippingRateRules, platformSettings, configAudits, productVariants, sanatzarCenters, trainingPrograms, trainingApplications, registeredArtisans, surveyQuestions, categories, artisanWork, products, newsletterSubscriptions, newsletterSignupSchema } from "@shared/schema";
 import { db, pool } from "./db";
-import { sql, and, eq, inArray, desc } from "drizzle-orm";
+import { sql, and, eq, inArray, desc, or } from "drizzle-orm";
 import { setupAuth, isAuthenticated, hashPassword } from "./auth";
 import { log } from "./vite";
 import { computeTax, type TaxItem } from "./tax";
@@ -25,6 +25,10 @@ import {
   insertPromotionSchema,
   insertPromotionRuleSchema,
   insertPromotionActionSchema,
+  insertTrainingCenterSchema,
+  insertTrainingProgramSchema,
+  insertTraineeApplicationSchema,
+  insertTraineeProgressSchema,
   variantSchema,
   registerSchema,
   loginSchema,
@@ -460,6 +464,94 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('Fetch buyer orders error:', error);
       res.status(500).json({ message: 'Failed to fetch orders' });
     }
+  });
+
+  const rateLimits = new Map<string, { windowStart: number; count: number }>();
+  const suggestionCache = new Map<string, { data: Array<{ id: string; title: string; giBrand: string; category: string; district: string; image: string | null }>; expiresAt: number }>();
+
+  app.get('/api/search/suggestions', async (req, res) => {
+    const start = Date.now();
+    const now = Date.now();
+    const ip = (req.headers['x-forwarded-for'] as string) || req.ip || 'unknown';
+
+    let rl = rateLimits.get(ip);
+    if (!rl || (now - rl.windowStart) >= 60_000) {
+      rl = { windowStart: now, count: 0 };
+    }
+    rl.count += 1;
+    rateLimits.set(ip, rl);
+    if (rl.count > 100) {
+      return res.status(429).json({ message: 'Rate limit exceeded' });
+    }
+
+    const qRaw = String(req.query.q ?? '').trim();
+    const limit = Math.min(Number(req.query.limit) || 10, 10);
+    if (!qRaw) {
+      return res.json({ suggestions: [], metrics: { durationMs: Date.now() - start, cached: false } });
+    }
+
+    const cacheKey = `${qRaw.toLowerCase()}::${limit}`;
+    const cached = suggestionCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return res.json({ suggestions: cached.data, metrics: { durationMs: Date.now() - start, cached: true } });
+    }
+
+    const approvedActive = and(eq(products.status, 'approved'), eq(products.isActive, true));
+    const prefixParam = `${qRaw}%`;
+    const containsParam = `%${qRaw}%`;
+
+    let rows = await db
+      .select({
+        id: products.id,
+        title: products.title,
+        giBrand: products.giBrand,
+        category: products.category,
+        district: products.district,
+        images: products.images,
+      })
+      .from(products)
+      .where(and(approvedActive, sql`${products.title} ILIKE ${prefixParam}`))
+      .orderBy(desc(products.createdAt))
+      .limit(limit);
+
+    if (rows.length < limit) {
+      const extra = await db
+        .select({
+          id: products.id,
+          title: products.title,
+          giBrand: products.giBrand,
+          category: products.category,
+          district: products.district,
+          images: products.images,
+        })
+        .from(products)
+        .where(
+          and(
+            approvedActive,
+            sql`(${products.title} ILIKE ${containsParam} OR ${products.giBrand} ILIKE ${containsParam} OR ${products.category} ILIKE ${containsParam})`,
+          ),
+        )
+        .orderBy(desc(products.createdAt))
+        .limit(limit * 2);
+      const map = new Map(rows.map(r => [r.id, r]));
+      for (const r of extra) {
+        if (map.size >= limit) break;
+        if (!map.has(r.id)) map.set(r.id, r);
+      }
+      rows = Array.from(map.values());
+    }
+
+    const suggestions = rows.slice(0, limit).map((r: any) => ({
+      id: r.id,
+      title: r.title,
+      giBrand: r.giBrand,
+      category: r.category,
+      district: r.district,
+      image: (r.images && Array.isArray(r.images) && r.images.length > 0) ? r.images[0] : null,
+    }));
+
+    suggestionCache.set(cacheKey, { data: suggestions, expiresAt: now + 5 * 60_000 });
+    res.json({ suggestions, metrics: { durationMs: Date.now() - start, cached: false } });
   });
 
   // Fetch last shipping details for auto-fill (Moved to top to ensure registration)
@@ -996,6 +1088,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get('/api/wishlist', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const items = await storage.getWishlistItemsByUser(userId);
+      res.json(items.map(i => i.productId));
+    } catch (error) {
+      console.error("Error fetching wishlist:", error);
+      res.status(500).json({ message: "Failed to fetch wishlist" });
+    }
+  });
+
+  app.post('/api/wishlist', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const { productId } = req.body as { productId: string };
+      if (!productId) return res.status(400).json({ message: "productId required" });
+      await storage.addWishlistItem(userId, productId);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error adding to wishlist:", error);
+      res.status(500).json({ message: "Failed to add to wishlist" });
+    }
+  });
+
+  app.delete('/api/wishlist/:productId', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const productId = req.params.productId as string;
+      await storage.removeWishlistItem(userId, productId);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error removing from wishlist:", error);
+      res.status(500).json({ message: "Failed to remove from wishlist" });
+    }
+  });
+
+  app.post('/api/wishlist/sync', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const { productIds } = req.body as { productIds: string[] };
+      const ids = Array.isArray(productIds) ? productIds : [];
+      for (const pid of ids) {
+        if (!pid) continue;
+        await storage.addWishlistItem(userId, pid);
+      }
+      const items = await storage.getWishlistItemsByUser(userId);
+      res.json(items.map(i => i.productId));
+    } catch (error) {
+      console.error("Error syncing wishlist:", error);
+      res.status(500).json({ message: "Failed to sync wishlist" });
+    }
+  });
+
+  app.get('/api/wishlist/products', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const list = await storage.getWishlistProducts(userId);
+      const productIds = list.map(p => p.id);
+      let statsMap: Record<string, { count: number; avg: number }> = {};
+      if (productIds.length > 0) {
+        try {
+          const rows = await db
+            .select({ productId: reviews.productId, count: sql<number>`COUNT(*)`, avg: sql<number>`AVG(${reviews.rating})` })
+            .from(reviews)
+            .where(and(inArray(reviews.productId, productIds), eq(reviews.status, 'approved')))
+            .groupBy(reviews.productId);
+          rows.forEach((r: any) => {
+            statsMap[r.productId] = { count: Number(r.count || 0), avg: Number(r.avg || 0) };
+          });
+        } catch { }
+      }
+      const serializedProducts = list.map(p => ({
+        ...serializeProduct(p),
+        ratingAverage: statsMap[p.id]?.avg ?? 0,
+        ratingCount: statsMap[p.id]?.count ?? 0,
+      }));
+      res.json({ products: serializedProducts });
+    } catch (error) {
+      console.error("Error fetching wishlist products:", error);
+      res.status(500).json({ message: "Failed to fetch wishlist products" });
+    }
+  });
+
   app.get('/api/products/:id/reviews', async (req, res) => {
     try {
       const productId = req.params.id as string;
@@ -1192,6 +1367,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching categories:", error);
       res.status(500).json({ message: "Failed to fetch categories" });
+    }
+  });
+
+  app.post('/api/newsletter/subscribe', async (req, res) => {
+    try {
+      const validated = newsletterSignupSchema.parse(req.body);
+      const email = String(validated.email).toLowerCase().trim();
+      const [existing] = await db.select().from(newsletterSubscriptions).where(eq(newsletterSubscriptions.email, email));
+      if (existing) {
+        return res.status(200).json({ message: "Already subscribed" });
+      }
+      const [created] = await db.insert(newsletterSubscriptions).values({
+        email,
+        consent: validated.consent ?? true,
+        source: "footer",
+      }).returning();
+      res.status(201).json(created);
+    } catch (error: any) {
+      if (error?.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid email address" });
+      }
+      res.status(500).json({ message: "Failed to subscribe" });
     }
   });
 
@@ -4084,6 +4281,187 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching payouts:", error);
       res.status(500).json({ message: "Failed to fetch payouts" });
+    }
+  });
+
+  app.get('/api/training/centers', async (_req, res) => {
+    try {
+      const centers = await storage.getTrainingCenters();
+      res.json(centers);
+    } catch {
+      res.status(500).json({ message: 'Failed to fetch centers' });
+    }
+  });
+
+  app.post('/api/admin/training/centers', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const payload = insertTrainingCenterSchema.parse(req.body);
+      const center = await storage.createTrainingCenter(payload);
+      res.status(201).json(center);
+    } catch (error: any) {
+      const msg = (error && error.message) || 'Failed to create center';
+      res.status(500).json({ message: msg });
+    }
+  });
+
+  app.put('/api/admin/training/centers/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const updates = insertTrainingCenterSchema.partial().parse(req.body);
+      const updated = await storage.updateTrainingCenter(req.params.id, updates);
+      if (!updated) return res.status(404).json({ message: 'Center not found' });
+      res.json(updated);
+    } catch (error: any) {
+      const msg = (error && error.message) || 'Failed to update center';
+      res.status(500).json({ message: msg });
+    }
+  });
+
+  app.get('/api/training/programs', async (_req, res) => {
+    try {
+      const programs = await storage.getTrainingPrograms();
+      res.json(programs);
+    } catch {
+      res.status(500).json({ message: 'Failed to fetch programs' });
+    }
+  });
+
+  app.post('/api/admin/training/programs', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const payload = insertTrainingProgramSchema.parse(req.body);
+      const program = await storage.createTrainingProgram(payload);
+      res.status(201).json(program);
+    } catch (error: any) {
+      const msg = (error && error.message) || 'Failed to create program';
+      res.status(500).json({ message: msg });
+    }
+  });
+
+  app.put('/api/admin/training/programs/:id', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const updates = insertTrainingProgramSchema.partial().parse(req.body);
+      const updated = await storage.updateTrainingProgram(req.params.id, updates);
+      if (!updated) return res.status(404).json({ message: 'Program not found' });
+      res.json(updated);
+    } catch (error: any) {
+      const msg = (error && error.message) || 'Failed to update program';
+      res.status(500).json({ message: msg });
+    }
+  });
+
+  app.get('/api/training/applications/me', isAuthenticated, async (req: any, res) => {
+    try {
+      const list = await storage.getTraineeApplicationsByUser(req.userId);
+      res.json(list);
+    } catch {
+      res.status(500).json({ message: 'Failed to fetch applications' });
+    }
+  });
+
+  app.post('/api/training/applications', isAuthenticated, async (req: any, res) => {
+    try {
+      const payload = insertTraineeApplicationSchema.parse({ ...req.body, userId: req.userId });
+      const created = await storage.createTraineeApplication(payload);
+      res.status(201).json(created);
+    } catch (error: any) {
+      const msg = (error && error.message) || 'Failed to apply';
+      res.status(500).json({ message: msg });
+    }
+  });
+
+  app.get('/api/admin/training/applications', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const programId = String(req.query.programId || '');
+      const list = programId ? await storage.getTraineeApplicationsByProgram(programId) : [];
+      res.json(list);
+    } catch {
+      res.status(500).json({ message: 'Failed to fetch applications' });
+    }
+  });
+
+  app.put('/api/admin/training/applications/:id/status', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const status = String((req.body || {}).status || '');
+      if (!status) return res.status(400).json({ message: 'status required' });
+      const timestamps: any = {};
+      if (status === 'accepted') timestamps.acceptedAt = new Date();
+      if (status === 'enrolled') timestamps.enrolledAt = new Date();
+      if (status === 'completed') timestamps.completedAt = new Date();
+      const updated = await storage.updateTraineeApplicationStatus(req.params.id, status, timestamps);
+      if (!updated) return res.status(404).json({ message: 'Application not found' });
+      res.json(updated);
+    } catch {
+      res.status(500).json({ message: 'Failed to update status' });
+    }
+  });
+
+  app.get('/api/training/progress/:applicationId', isAuthenticated, async (req: any, res) => {
+    try {
+      const appId = req.params.applicationId;
+      const apps = await storage.getTraineeApplicationsByUser(req.userId);
+      const owns = apps.some(a => a.id === appId);
+      if (!owns) return res.status(403).json({ message: 'Not authorized' });
+      const prog = await storage.getTraineeProgressByApplication(appId);
+      res.json(prog || null);
+    } catch {
+      res.status(500).json({ message: 'Failed to fetch progress' });
+    }
+  });
+
+  app.put('/api/admin/training/progress/:applicationId', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const appId = req.params.applicationId;
+      const data = insertTraineeProgressSchema.parse({ ...req.body, applicationId: appId });
+      const updated = await storage.upsertTraineeProgress(appId, { milestones: data.milestones, completionPercent: data.completionPercent, attendancePercent: data.attendancePercent, grade: data.grade });
+      res.json(updated);
+    } catch (error: any) {
+      const msg = (error && error.message) || 'Failed to update progress';
+      res.status(500).json({ message: msg });
+    }
+  });
+
+  app.get('/api/training/work/me', isAuthenticated, async (req: any, res) => {
+    try {
+      const list = await storage.getArtisanWorkByUser(req.userId);
+      res.json(list);
+    } catch {
+      res.status(500).json({ message: 'Failed to fetch work' });
+    }
+  });
+
+  app.get('/api/admin/training/work', isAuthenticated, isAdmin, async (_req, res) => {
+    try {
+      const rows = await db.select().from(artisanWork).orderBy(desc(artisanWork.assignedAt));
+      res.json(rows);
+    } catch {
+      res.status(500).json({ message: 'Failed to fetch work' });
+    }
+  });
+
+  app.put('/api/training/work/:id/complete', isAuthenticated, async (req: any, res) => {
+    try {
+      const workId = req.params.id;
+      const myWork = await storage.getArtisanWorkByUser(req.userId);
+      const target = myWork.find(w => w.id === workId);
+      if (!target) return res.status(403).json({ message: 'Not authorized' });
+      const updated = await storage.updateArtisanWorkStatus(workId, 'completed', { completedAt: new Date() as any });
+      res.json(updated);
+    } catch {
+      res.status(500).json({ message: 'Failed to update work' });
+    }
+  });
+
+  app.put('/api/admin/training/work/:id/approve', isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const workId = req.params.id;
+      const rows = await db.select().from(artisanWork).where(eq(artisanWork.id, workId));
+      const work = rows[0] as any;
+      if (!work) return res.status(404).json({ message: 'Work not found' });
+      const updated = await storage.updateArtisanWorkStatus(workId, 'approved', { approvedAt: new Date() as any });
+      const payout = await storage.createPayout({ vendorId: work.workerId, amount: work.amount, status: 'pending' } as any);
+      await storage.linkPayoutToArtisanWork(workId, payout.id);
+      res.json({ work: updated, payout });
+    } catch {
+      res.status(500).json({ message: 'Failed to approve work' });
     }
   });
 

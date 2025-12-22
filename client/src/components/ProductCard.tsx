@@ -3,13 +3,15 @@ import DiscountBadge from "@/components/DiscountBadge";
 import { Button } from "@/components/ui/button";
 import DistrictBadge from "./DistrictBadge";
 import GITag from "./GITag";
-import { ShoppingCart, Star } from "lucide-react";
+import { ShoppingCart, Star, Eye } from "lucide-react";
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { addToCart } from "@/lib/cart";
 import { useToast } from "@/hooks/use-toast";
 import { formatPrice } from "@/lib/utils/price";
 import { normalizeImagePath } from "@/lib/utils/image";
+import WishlistButton from "@/components/WishlistButton";
+import QuickViewDialog from "@/components/QuickViewDialog";
 
 interface ProductCardProps {
   id: string;
@@ -49,6 +51,7 @@ export default function ProductCard({
   promotionEndsAt,
 }: ProductCardProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(false);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
@@ -96,9 +99,23 @@ export default function ProductCard({
             className="w-full h-full object-cover transition-transform duration-300"
             style={{ transform: isHovered ? 'scale(1.05)' : 'scale(1)' }}
           />
-          <div className="absolute top-2 right-2 flex flex-col gap-2">
+          <div className="absolute top-2 right-2 flex flex-col gap-2 items-end">
             <DistrictBadge district={district} />
+            {isHovered ? <div className="mt-1"><WishlistButton productId={id} /></div> : null}
           </div>
+          {isHovered ? (
+            <div className="absolute bottom-2 left-2">
+              <Button
+                variant="secondary"
+                size="icon"
+                onClick={(e) => { e.stopPropagation(); setQuickOpen(true); }}
+                aria-label="Quick view"
+                data-testid={`button-quick-view-${id}`}
+              >
+                <Eye className="w-4 h-4" />
+              </Button>
+            </div>
+          ) : null}
           {promotionPercent != null && (
             <div className="absolute top-2 left-2 flex items-center gap-2">
               <DiscountBadge percent={promotionPercent} tone={promotionTone || "destructive"} size="md" />
@@ -145,14 +162,26 @@ export default function ProductCard({
         )}
       </CardContent>
       <CardFooter className="p-4 pt-0">
-        <Button 
-          className="w-full" 
-          onClick={handleAddToCart}
-          data-testid={`button-add-to-cart-${id}`}
-        >
-          <ShoppingCart className="w-4 h-4 mr-2" />
-          Add to Cart
-        </Button>
+        <div className="flex gap-2 w-full">
+          <Button 
+            className="flex-1" 
+            onClick={handleAddToCart}
+            data-testid={`button-add-to-cart-${id}`}
+          >
+            <ShoppingCart className="w-4 h-4 mr-2" />
+            Add to Cart
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            className="hidden sm:inline-flex"
+            onClick={(e) => { e.stopPropagation(); setQuickOpen(true); }}
+            aria-label="Quick view"
+          >
+            <Eye className="w-4 h-4" />
+          </Button>
+        </div>
+        <QuickViewDialog productId={id} open={quickOpen} onOpenChange={setQuickOpen} />
       </CardFooter>
     </Card>
   );

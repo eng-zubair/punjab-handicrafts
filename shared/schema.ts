@@ -314,6 +314,24 @@ export const reviewVotes = pgTable("review_votes", {
   index("IDX_review_vote_unique").on(table.reviewId, table.userId)
 ]);
 
+export const newsletterSubscriptions = pgTable("newsletter_subscriptions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: varchar("email").unique().notNull(),
+  consent: boolean("consent").notNull().default(true),
+  source: text("source").notNull().default("footer"),
+  userId: varchar("user_id").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const wishlistItems = pgTable("wishlist_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  productId: varchar("product_id").notNull().references(() => products.id, { onDelete: 'cascade' }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("IDX_wishlist_unique").on(table.userId, table.productId)
+]);
+
 export const PRODUCT_CATEGORIES = [
   "Clothing",
   "Stitched",
@@ -461,6 +479,11 @@ export const insertReviewVoteSchema = createInsertSchema(reviewVotes).omit({
   createdAt: true,
 });
 
+export const insertNewsletterSubscriptionSchema = createInsertSchema(newsletterSubscriptions).omit({
+  id: true,
+  createdAt: true,
+});
+
 export type UpsertUser = z.infer<typeof upsertUserSchema>;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -531,12 +554,15 @@ export type PromotionProductHistory = typeof promotionProductHistory.$inferSelec
 
 export type InsertReview = z.infer<typeof insertReviewSchema>;
 export type Review = typeof reviews.$inferSelect;
+export type WishlistItem = typeof wishlistItems.$inferSelect;
 
 export type InsertReviewMedia = z.infer<typeof insertReviewMediaSchema>;
 export type ReviewMedia = typeof reviewMedia.$inferSelect;
 
 export type InsertReviewVote = z.infer<typeof insertReviewVoteSchema>;
 export type ReviewVote = typeof reviewVotes.$inferSelect;
+export type InsertNewsletterSubscription = z.infer<typeof insertNewsletterSubscriptionSchema>;
+export type NewsletterSubscription = typeof newsletterSubscriptions.$inferSelect;
 
 // Authentication schemas with password validation
 export const registerSchema = z.object({
@@ -557,6 +583,12 @@ export const loginSchema = z.object({
 
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+
+export const newsletterSignupSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  consent: z.boolean().optional(),
+});
+export type NewsletterSignupInput = z.infer<typeof newsletterSignupSchema>;
 export const platformSettings = pgTable("platform_settings", {
   id: varchar("id").primaryKey().default("default"),
   taxEnabled: boolean("tax_enabled").notNull().default(true),
@@ -745,6 +777,56 @@ export const registeredArtisans = pgTable("registered_artisans", {
   approvedBy: varchar("approved_by").references(() => users.id),
 });
 
+export const trainingCenters = pgTable("training_centers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  district: text("district").notNull(),
+  address: text("address"),
+  contactPhone: varchar("contact_phone"),
+  contactEmail: varchar("contact_email"),
+  capacity: integer("capacity").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const traineeApplications = pgTable("trainee_applications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  programId: varchar("program_id").notNull().references(() => trainingPrograms.id),
+  status: text("status").notNull().default("applied"),
+  motivation: text("motivation"),
+  experience: text("experience"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  acceptedAt: timestamp("accepted_at"),
+  enrolledAt: timestamp("enrolled_at"),
+  completedAt: timestamp("completed_at"),
+});
+
+export const traineeProgress = pgTable("trainee_progress", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  applicationId: varchar("application_id").notNull().references(() => traineeApplications.id, { onDelete: "cascade" }),
+  milestones: jsonb("milestones"),
+  completionPercent: integer("completion_percent").notNull().default(0),
+  attendancePercent: integer("attendance_percent").notNull().default(0),
+  grade: text("grade"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const artisanWork = pgTable("artisan_work", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  workerId: varchar("worker_id").notNull().references(() => users.id),
+  centerId: varchar("center_id").references(() => trainingCenters.id),
+  programId: varchar("program_id").references(() => trainingPrograms.id),
+  title: text("title").notNull(),
+  description: text("description"),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  status: text("status").notNull().default("pending"),
+  payoutId: varchar("payout_id").references(() => payouts.id),
+  assignedAt: timestamp("assigned_at").defaultNow().notNull(),
+  completedAt: timestamp("completed_at"),
+  approvedAt: timestamp("approved_at"),
+});
+
 // Survey Questions (configurable for both training and artisan flows)
 export const surveyQuestions = pgTable("survey_questions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -759,6 +841,11 @@ export const surveyQuestions = pgTable("survey_questions", {
 });
 
 // Insert schemas for training module
+export const insertTrainingCenterSchema = createInsertSchema(trainingCenters).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertSanatzarCenterSchema = createInsertSchema(sanatzarCenters).omit({
   id: true,
   createdAt: true,
@@ -772,6 +859,15 @@ export const insertTrainingProgramTemplateSchema = createInsertSchema(trainingPr
 export const insertTrainingProgramSchema = createInsertSchema(trainingPrograms).omit({
   id: true,
   createdAt: true,
+});
+
+export const insertTraineeApplicationSchema = createInsertSchema(traineeApplications).omit({
+  id: true,
+  createdAt: true,
+  acceptedAt: true,
+  enrolledAt: true,
+  completedAt: true,
+  status: true,
 });
 
 export const insertTrainingApplicationSchema = createInsertSchema(trainingApplications).omit({
@@ -791,12 +887,27 @@ export const insertRegisteredArtisanSchema = createInsertSchema(registeredArtisa
   vendorConversionStatus: true,
 });
 
+export const insertTraineeProgressSchema = createInsertSchema(traineeProgress).omit({
+  id: true,
+  updatedAt: true,
+});
+
+export const insertArtisanWorkSchema = createInsertSchema(artisanWork).omit({
+  id: true,
+  assignedAt: true,
+  completedAt: true,
+  approvedAt: true,
+});
+
 export const insertSurveyQuestionSchema = createInsertSchema(surveyQuestions).omit({
   id: true,
   createdAt: true,
 });
 
 // Types for training module
+export type InsertTrainingCenter = z.infer<typeof insertTrainingCenterSchema>;
+export type TrainingCenter = typeof trainingCenters.$inferSelect;
+
 export type InsertSanatzarCenter = z.infer<typeof insertSanatzarCenterSchema>;
 export type SanatzarCenter = typeof sanatzarCenters.$inferSelect;
 
@@ -806,11 +917,20 @@ export type TrainingProgramTemplate = typeof trainingProgramTemplates.$inferSele
 export type InsertTrainingProgram = z.infer<typeof insertTrainingProgramSchema>;
 export type TrainingProgram = typeof trainingPrograms.$inferSelect;
 
+export type InsertTraineeApplication = z.infer<typeof insertTraineeApplicationSchema>;
+export type TraineeApplication = typeof traineeApplications.$inferSelect;
+
 export type InsertTrainingApplication = z.infer<typeof insertTrainingApplicationSchema>;
 export type TrainingApplication = typeof trainingApplications.$inferSelect;
 
 export type InsertRegisteredArtisan = z.infer<typeof insertRegisteredArtisanSchema>;
 export type RegisteredArtisan = typeof registeredArtisans.$inferSelect;
+
+export type InsertTraineeProgress = z.infer<typeof insertTraineeProgressSchema>;
+export type TraineeProgress = typeof traineeProgress.$inferSelect;
+
+export type InsertArtisanWork = z.infer<typeof insertArtisanWorkSchema>;
+export type ArtisanWork = typeof artisanWork.$inferSelect;
 
 export type InsertSurveyQuestion = z.infer<typeof insertSurveyQuestionSchema>;
 export type SurveyQuestion = typeof surveyQuestions.$inferSelect;

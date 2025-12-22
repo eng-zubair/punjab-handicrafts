@@ -22,7 +22,6 @@ export default function TrainingHome() {
         <div className="min-h-screen flex flex-col">
             <Header />
 
-            {/* Hero Section */}
             <section className="relative bg-gradient-to-br from-amber-600 via-orange-500 to-rose-500 text-white py-20 md:py-32">
                 <div className="absolute inset-0 bg-black/20" />
                 <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
@@ -53,7 +52,6 @@ export default function TrainingHome() {
                 </div>
             </section>
 
-            {/* Stats Section */}
             <section className="py-16 bg-muted/30">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
@@ -77,7 +75,6 @@ export default function TrainingHome() {
                 </div>
             </section>
 
-            {/* How It Works */}
             <section className="py-16">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="text-center mb-12">
@@ -109,7 +106,6 @@ export default function TrainingHome() {
                 </div>
             </section>
 
-            {/* Featured Programs */}
             <section className="py-16 bg-muted/30">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex items-center justify-between mb-8">
@@ -172,7 +168,6 @@ export default function TrainingHome() {
                 </div>
             </section>
 
-            {/* Training Centers Overview */}
             <section className="py-16">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex items-center justify-between mb-8">
@@ -219,7 +214,6 @@ export default function TrainingHome() {
                 </div>
             </section>
 
-            {/* CTA Section */}
             <section className="py-16 bg-gradient-to-r from-amber-600 to-orange-500 text-white">
                 <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
                     <h2 className="text-3xl font-bold mb-4">Ready to Start Your Journey?</h2>

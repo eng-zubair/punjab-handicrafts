@@ -1,9 +1,11 @@
 import { Switch, Route } from "wouter";
+import { Component } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { WishlistProvider } from "@/components/WishlistContext";
 import Home from "@/pages/Home";
 import Products from "@/pages/Products";
 import ProductDetail from "@/pages/ProductDetail";
@@ -34,15 +36,17 @@ import Pricing from "@/pages/vendor/Pricing";
 import SellerGuide from "@/pages/vendor/SellerGuide";
 import Verification from "@/pages/vendor/Verification";
 import Store from "@/pages/Store";
+import Stores from "@/pages/Stores";
 import PrivacyPolicy from "@/pages/PrivacyPolicy";
 import Returns from "@/pages/Returns";
 import Terms from "@/pages/Terms";
-// Training Module
+import Wishlist from "@/pages/Wishlist";
 import TrainingHome from "@/pages/training/Home";
 import TrainingPrograms from "@/pages/training/Programs";
 import TrainingCenters from "@/pages/training/Centers";
 import TrainingApply from "@/pages/training/Apply";
-// Artisan Module
+import TrainingDashboard from "@/pages/training/Dashboard";
+import TrainingProgress from "@/pages/training/Progress";
 import ArtisanRegister from "@/pages/artisan/Register";
 
 function Router() {
@@ -56,6 +60,8 @@ function Router() {
       <Route path="/vendor/verification" component={Verification} />
       <Route path="/products/:id" component={ProductDetail} />
       <Route path="/stores/:id" component={Store} />
+      <Route path="/stores" component={Stores} />
+      <Route path="/wishlist" component={Wishlist} />
       <Route path="/cart" component={Cart} />
       <Route path="/checkout" component={Checkout} />
       <Route path="/orders" component={Orders} />
@@ -63,6 +69,7 @@ function Router() {
       <Route path="/returns" component={Returns} />
       <Route path="/terms" component={Terms} />
       <Route path="/buyer/dashboard" component={BuyerDashboard} />
+      <Route path="/trainee/dashboard" component={TrainingDashboard} />
       <Route path="/vendor/register" component={VendorRegister} />
       <Route path="/vendor/dashboard" component={VendorOverview} />
       <Route path="/vendor/products" component={VendorProducts} />
@@ -73,6 +80,7 @@ function Router() {
       <Route path="/training/programs" component={TrainingPrograms} />
       <Route path="/training/centers" component={TrainingCenters} />
       <Route path="/training/apply" component={TrainingApply} />
+      <Route path="/training/progress/:id" component={TrainingProgress} />
       {/* Artisan Module Routes */}
       <Route path="/artisan/register" component={ArtisanRegister} />
       {/* Admin Routes */}
@@ -93,14 +101,52 @@ function Router() {
   );
 }
 
+class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean; errorMessage?: string }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, errorMessage: undefined };
+  }
+  static getDerivedStateFromError(error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { hasError: true, errorMessage: msg };
+  }
+  componentDidCatch(error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("App crashed:", msg);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen w-full flex items-center justify-center bg-gray-50">
+          <div className="w-full max-w-md mx-4 border rounded-lg bg-white">
+            <div className="p-6">
+              <h1 className="text-2xl font-bold">Something went wrong</h1>
+              <p className="mt-2 text-sm text-gray-600">{this.state.errorMessage || "An unexpected error occurred."}</p>
+              <div className="mt-4 flex gap-2">
+                <a href="/" className="px-4 py-2 rounded bg-black text-white">Go Home</a>
+                <button onClick={() => location.reload()} className="px-4 py-2 rounded bg-gray-200">Reload</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children as any;
+  }
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-        </TooltipProvider>
+        <WishlistProvider>
+          <TooltipProvider>
+            <Toaster />
+            <ErrorBoundary>
+              <Router />
+            </ErrorBoundary>
+          </TooltipProvider>
+        </WishlistProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

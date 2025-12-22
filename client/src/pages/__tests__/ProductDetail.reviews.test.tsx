@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ProductDetail from '@/pages/ProductDetail';
+import { ThemeProvider } from '@/components/ThemeProvider';
+import { WishlistProvider } from '@/components/WishlistContext';
 
 vi.mock('wouter', async () => {
   return {
@@ -61,6 +63,7 @@ function setup() {
   client.setQueryData([`/api/products/prod1`], product);
   client.setQueryData([`/api/stores/${product.storeId}`], store);
   client.setQueryData([`/api/products/prod1/reviews`, { sort: 'newest' }], { reviews, stats });
+  client.setQueryData([`/api/promotions/active-by-products`, { ids: 'prod1' }], []);
 
   return { client };
 }
@@ -69,10 +72,23 @@ describe('ProductDetail reviews display', () => {
   it('renders rating summary and review with name, text, date', () => {
     const { client } = setup();
     render(
-      <QueryClientProvider client={client}>
-        <ProductDetail />
-      </QueryClientProvider>
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <WishlistProvider>
+            <ProductDetail />
+          </WishlistProvider>
+        </QueryClientProvider>
+      </ThemeProvider>
     );
+
+    const breadcrumb = screen.getByLabelText('Breadcrumb');
+    expect(breadcrumb.getAttribute('role')).toBe('navigation');
+    const bc = within(breadcrumb);
+    expect(bc.getByText('Home')).toBeDefined();
+    expect(bc.getByText('Products')).toBeDefined();
+    expect(bc.getByText('Handmade Vase')).toBeDefined();
+    expect((bc.getByText('Home').closest('a') as HTMLAnchorElement).getAttribute('href')).toBe('/');
+    expect((bc.getByText('Products').closest('a') as HTMLAnchorElement).getAttribute('href')).toBe('/products');
 
     expect(screen.getByTestId('text-product-title').textContent).toContain('Handmade Vase');
     expect(screen.getByText('(1)')).toBeDefined();

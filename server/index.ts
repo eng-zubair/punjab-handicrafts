@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { initializeDefaultAdmin, initializeOrderSchema } from "./init";
+import { initializeDefaultAdmin, initializeOrderSchema, initializeTrainingSchema } from "./init";
 
 const app = express();
 
@@ -94,6 +94,7 @@ app.use((req, res, next) => {
 
   // Ensure DB schema before any storage reads, then initialize default admin
   await initializeOrderSchema();
+  await initializeTrainingSchema();
   await initializeDefaultAdmin();
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
@@ -104,7 +105,7 @@ app.use((req, res, next) => {
   log('Server restarting with v2 endpoint...');
   server.listen({
     port,
-    host: "127.0.0.1",
+    host: "0.0.0.0",
   }, () => {
     log(`serving on port ${port}`);
   });

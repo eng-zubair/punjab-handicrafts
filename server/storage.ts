@@ -19,6 +19,12 @@ import {
   reviewVotes,
   productCategories,
   productVariants,
+  trainingCenters,
+  trainingPrograms,
+  traineeApplications,
+  traineeProgress,
+  artisanWork,
+  wishlistItems,
   type User,
   type UpsertUser,
   type InsertStore,
@@ -53,6 +59,17 @@ import {
   type PromotionProduct,
   type Review,
   type InsertReview,
+  type InsertTrainingCenter,
+  type TrainingCenter,
+  type InsertTrainingProgram,
+  type TrainingProgram,
+  type InsertTraineeApplication,
+  type TraineeApplication,
+  type InsertTraineeProgress,
+  type TraineeProgress,
+  type InsertArtisanWork,
+  type ArtisanWork,
+  type WishlistItem,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, or, like, gte, lte, desc, asc, count, inArray, sql } from "drizzle-orm";
@@ -194,6 +211,37 @@ export interface IStorage {
   addReviewMedia(reviewId: string, url: string, type: string): Promise<void>;
   upsertReviewVote(reviewId: string, userId: string, value: 1 | -1): Promise<{ helpfulUp: number; helpfulDown: number }>;
   getReviewStats(productId: string): Promise<{ count: number; average: number }>;
+
+  // Training operations
+  createTrainingCenter(center: InsertTrainingCenter): Promise<TrainingCenter>;
+  getTrainingCenters(): Promise<TrainingCenter[]>;
+  getTrainingCenter(id: string): Promise<TrainingCenter | undefined>;
+  updateTrainingCenter(id: string, updates: Partial<InsertTrainingCenter>): Promise<TrainingCenter | undefined>;
+
+  createTrainingProgram(program: InsertTrainingProgram): Promise<TrainingProgram>;
+  getTrainingPrograms(): Promise<TrainingProgram[]>;
+  getProgramsByCenter(centerId: string): Promise<TrainingProgram[]>;
+  getTrainingProgram(id: string): Promise<TrainingProgram | undefined>;
+  updateTrainingProgram(id: string, updates: Partial<InsertTrainingProgram>): Promise<TrainingProgram | undefined>;
+
+  createTraineeApplication(app: InsertTraineeApplication): Promise<TraineeApplication>;
+  getTraineeApplicationsByUser(userId: string): Promise<TraineeApplication[]>;
+  getTraineeApplicationsByProgram(programId: string): Promise<TraineeApplication[]>;
+  updateTraineeApplicationStatus(id: string, status: string, timestamps?: { acceptedAt?: Date; enrolledAt?: Date; completedAt?: Date }): Promise<TraineeApplication | undefined>;
+
+  upsertTraineeProgress(appId: string, data: Omit<InsertTraineeProgress, "applicationId">): Promise<TraineeProgress>;
+  getTraineeProgressByApplication(appId: string): Promise<TraineeProgress | undefined>;
+
+  createArtisanWork(work: InsertArtisanWork): Promise<ArtisanWork>;
+  getArtisanWorkByUser(userId: string): Promise<ArtisanWork[]>;
+  updateArtisanWorkStatus(id: string, status: string, updates?: Partial<ArtisanWork>): Promise<ArtisanWork | undefined>;
+  linkPayoutToArtisanWork(id: string, payoutId: string): Promise<ArtisanWork | undefined>;
+
+  // Wishlist operations
+  getWishlistItemsByUser(userId: string): Promise<WishlistItem[]>;
+  addWishlistItem(userId: string, productId: string): Promise<WishlistItem>;
+  removeWishlistItem(userId: string, productId: string): Promise<void>;
+  getWishlistProducts(userId: string): Promise<Product[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1037,6 +1085,132 @@ export class DatabaseStorage implements IStorage {
       .where(eq(reviews.status, "approved"));
     const r = rows[0] as any;
     return { total: Number(r?.count ?? 0), average: Number(r?.avg ?? 0) };
+  }
+
+  async createTrainingCenter(center: InsertTrainingCenter): Promise<TrainingCenter> {
+    const [row] = await db.insert(trainingCenters).values(center).returning();
+    return row;
+  }
+
+  async getTrainingCenters(): Promise<TrainingCenter[]> {
+    return await db.select().from(trainingCenters).orderBy(desc(trainingCenters.createdAt));
+  }
+
+  async getTrainingCenter(id: string): Promise<TrainingCenter | undefined> {
+    const [row] = await db.select().from(trainingCenters).where(eq(trainingCenters.id, id));
+    return row;
+  }
+
+  async updateTrainingCenter(id: string, updates: Partial<InsertTrainingCenter>): Promise<TrainingCenter | undefined> {
+    const [row] = await db.update(trainingCenters).set(updates).where(eq(trainingCenters.id, id)).returning();
+    return row;
+  }
+
+  async createTrainingProgram(program: InsertTrainingProgram): Promise<TrainingProgram> {
+    const [row] = await db.insert(trainingPrograms).values(program).returning();
+    return row;
+  }
+
+  async getTrainingPrograms(): Promise<TrainingProgram[]> {
+    return await db.select().from(trainingPrograms).orderBy(desc(trainingPrograms.createdAt));
+  }
+
+  async getProgramsByCenter(centerId: string): Promise<TrainingProgram[]> {
+    return await db.select().from(trainingPrograms).where(eq(trainingPrograms.centerId, centerId));
+  }
+
+  async getTrainingProgram(id: string): Promise<TrainingProgram | undefined> {
+    const [row] = await db.select().from(trainingPrograms).where(eq(trainingPrograms.id, id));
+    return row;
+  }
+
+  async updateTrainingProgram(id: string, updates: Partial<InsertTrainingProgram>): Promise<TrainingProgram | undefined> {
+    const [row] = await db.update(trainingPrograms).set(updates).where(eq(trainingPrograms.id, id)).returning();
+    return row;
+  }
+
+  async createTraineeApplication(app: InsertTraineeApplication): Promise<TraineeApplication> {
+    const [row] = await db.insert(traineeApplications).values(app).returning();
+    return row;
+  }
+
+  async getTraineeApplicationsByUser(userId: string): Promise<TraineeApplication[]> {
+    return await db.select().from(traineeApplications).where(eq(traineeApplications.userId, userId));
+  }
+
+  async getTraineeApplicationsByProgram(programId: string): Promise<TraineeApplication[]> {
+    return await db.select().from(traineeApplications).where(eq(traineeApplications.programId, programId));
+  }
+
+  async updateTraineeApplicationStatus(id: string, status: string, timestamps?: { acceptedAt?: Date; enrolledAt?: Date; completedAt?: Date }): Promise<TraineeApplication | undefined> {
+    const payload: any = { status };
+    if (timestamps?.acceptedAt) payload.acceptedAt = timestamps.acceptedAt;
+    if (timestamps?.enrolledAt) payload.enrolledAt = timestamps.enrolledAt;
+    if (timestamps?.completedAt) payload.completedAt = timestamps.completedAt;
+    const [row] = await db.update(traineeApplications).set(payload).where(eq(traineeApplications.id, id)).returning();
+    return row;
+  }
+
+  async upsertTraineeProgress(appId: string, data: Omit<InsertTraineeProgress, "applicationId">): Promise<TraineeProgress> {
+    const existing = await db.select().from(traineeProgress).where(eq(traineeProgress.applicationId, appId));
+    if (existing.length === 0) {
+      const [row] = await db.insert(traineeProgress).values({ applicationId: appId, ...data }).returning();
+      return row;
+    }
+    const [row] = await db.update(traineeProgress).set({ ...data, updatedAt: new Date() }).where(eq(traineeProgress.id, existing[0].id)).returning();
+    return row;
+  }
+
+  async getTraineeProgressByApplication(appId: string): Promise<TraineeProgress | undefined> {
+    const [row] = await db.select().from(traineeProgress).where(eq(traineeProgress.applicationId, appId));
+    return row;
+  }
+
+  async createArtisanWork(work: InsertArtisanWork): Promise<ArtisanWork> {
+    const [row] = await db.insert(artisanWork).values(work).returning();
+    return row;
+  }
+
+  async getArtisanWorkByUser(userId: string): Promise<ArtisanWork[]> {
+    return await db.select().from(artisanWork).where(eq(artisanWork.workerId, userId)).orderBy(desc(artisanWork.assignedAt));
+  }
+
+  async updateArtisanWorkStatus(id: string, status: string, updates?: Partial<ArtisanWork>): Promise<ArtisanWork | undefined> {
+    const payload: any = { status, ...(updates || {}) };
+    const [row] = await db.update(artisanWork).set(payload).where(eq(artisanWork.id, id)).returning();
+    return row;
+  }
+
+  async linkPayoutToArtisanWork(id: string, payoutId: string): Promise<ArtisanWork | undefined> {
+    const [row] = await db.update(artisanWork).set({ payoutId }).where(eq(artisanWork.id, id)).returning();
+    return row;
+  }
+
+  async getWishlistItemsByUser(userId: string): Promise<WishlistItem[]> {
+    return await db.select().from(wishlistItems).where(eq(wishlistItems.userId, userId));
+  }
+
+  async addWishlistItem(userId: string, productId: string): Promise<WishlistItem> {
+    const [row] = await db
+      .insert(wishlistItems)
+      .values({ userId, productId })
+      .onConflictDoNothing({ target: [wishlistItems.userId, wishlistItems.productId] })
+      .returning();
+    if (row) return row;
+    const [existing] = await db.select().from(wishlistItems).where(and(eq(wishlistItems.userId, userId), eq(wishlistItems.productId, productId)));
+    return existing as WishlistItem;
+  }
+
+  async removeWishlistItem(userId: string, productId: string): Promise<void> {
+    await db.delete(wishlistItems).where(and(eq(wishlistItems.userId, userId), eq(wishlistItems.productId, productId)));
+  }
+
+  async getWishlistProducts(userId: string): Promise<Product[]> {
+    const items = await this.getWishlistItemsByUser(userId);
+    const ids = items.map(i => i.productId);
+    if (ids.length === 0) return [];
+    const rows = await db.select().from(products).where(inArray(products.id, ids));
+    return rows.map(normalizeProductImages);
   }
 }
 

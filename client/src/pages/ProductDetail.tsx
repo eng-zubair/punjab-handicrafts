@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useParams, Link, useLocation } from "wouter";
+import { useParams, useLocation, Link } from "wouter";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import { Button } from "@/components/ui/button";
@@ -7,8 +7,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
-import { AlertCircle, ShoppingCart, Store, MapPin, Award, Minus, Plus, ArrowLeft, Star } from "lucide-react";
-import { useState, useEffect, useMemo } from "react";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import { AlertCircle, ShoppingCart, Store, MapPin, Award, Minus, Plus, ArrowLeft, Star, RotateCcw, Link as LinkIcon } from "lucide-react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import type { Product, Variant } from "@shared/schema";
 import { addToCart } from "@/lib/cart";
 import { useToast } from "@/hooks/use-toast";
@@ -19,6 +27,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import WishlistButton from "@/components/WishlistButton";
+import ProductCard from "@/components/ProductCard";
+import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
+import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
+import { SiWhatsapp, SiFacebook, SiX } from "react-icons/si";
+import RecentlyViewed from "@/components/RecentlyViewed";
+import { addRecentlyViewed } from "@/lib/recentlyViewed";
 
 type Store = {
   id: string;
@@ -45,6 +60,7 @@ export default function ProductDetail() {
   const [mediaType, setMediaType] = useState<'image' | 'video'>('image');
   const [selectedVariant, setSelectedVariant] = useState<Variant | null>(null);
   const [parsedVariants, setParsedVariants] = useState<Variant[]>([]);
+  const zoomRef = useRef<ReactZoomPanPinchRef | null>(null);
 
   const { data: product, isLoading: productLoading, isError: productError, error: productErrorData } = useQuery<Product>({
     queryKey: [`/api/products/${id}`],
@@ -101,6 +117,27 @@ export default function ProductDetail() {
   const { data: variantPromos = [] } = useQuery<Array<{ targetId: string; type: string; value: string; endAt: string | null }>>({
     queryKey: ["/api/promotions/active-by-variants", { skus: variantSkus.join(',') }],
     enabled: variantSkus.length > 0,
+  });
+
+  const { data: brandRelated } = useQuery<{ products: any[] }>({
+    queryKey: ["/api/products", { giBrand: product?.giBrand, page: 1, pageSize: 24 }],
+    enabled: !!product?.giBrand,
+  });
+  const { data: categoryRelated } = useQuery<{ products: any[] }>({
+    queryKey: ["/api/products", { category: product?.category, page: 1, pageSize: 24 }],
+    enabled: !!product?.category,
+  });
+  const { data: districtRelated } = useQuery<{ products: any[] }>({
+    queryKey: ["/api/products", { district: product?.district, page: 1, pageSize: 24 }],
+    enabled: !!product?.district,
+  });
+  const needMoreFallback =
+    ((categoryRelated?.products?.length ?? 0) +
+      (brandRelated?.products?.length ?? 0) +
+      (districtRelated?.products?.length ?? 0)) < 4;
+  const { data: moreApproved } = useQuery<{ products: any[] }>({
+    queryKey: ["/api/products", { page: 1, pageSize: 24 }],
+    enabled: needMoreFallback,
   });
 
   const handleQuantityChange = (delta: number) => {
@@ -181,6 +218,100 @@ export default function ProductDetail() {
     }, quantity);
 
     setLocation('/cart');
+  };
+
+  const trackShareEvent = async (platform: string, success: boolean, error?: string) => {
+    try {
+      await apiRequest("POST", "/api/analytics/share", {
+        platform,
+        productId: product?.id,
+        success,
+        error: error || null,
+      });
+    } catch {}
+  };
+
+  const getShareUrl = () => {
+    try {
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      return `${origin}/products/${product?.id ?? id}`;
+    } catch {
+      return `/products/${product?.id ?? id}`;
+    }
+  };
+
+  const getShareText = () => {
+    const title = product?.title || "Punjab Handicrafts";
+    return `Check out "${title}" on Punjab Handicrafts`;
+  };
+
+  const openShareWindow = (url: string) => {
+    try {
+      const w = window.open(url, "_blank", "noopener,noreferrer");
+      return !!w;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleShareWhatsApp = async () => {
+    const url = getShareUrl();
+    const text = `${getShareText()} ${url}`;
+    const shareUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+    try {
+      if ((navigator as any)?.share) {
+        try {
+          await (navigator as any).share({ text, url });
+          await trackShareEvent("whatsapp", true);
+          return;
+        } catch (e: any) {
+          await trackShareEvent("whatsapp", false, String(e?.message || e));
+        }
+      }
+      const ok = openShareWindow(shareUrl);
+      await trackShareEvent("whatsapp", ok);
+      if (!ok) throw new Error("Popup blocked");
+    } catch (e: any) {
+      toast({ title: "Share failed", description: "Unable to share on WhatsApp", variant: "destructive" });
+    }
+  };
+
+  const handleShareFacebook = async () => {
+    const url = getShareUrl();
+    const shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`;
+    try {
+      const ok = openShareWindow(shareUrl);
+      await trackShareEvent("facebook", ok);
+      if (!ok) throw new Error("Popup blocked");
+    } catch (e: any) {
+      toast({ title: "Share failed", description: "Unable to share on Facebook", variant: "destructive" });
+    }
+  };
+
+  const handleShareTwitter = async () => {
+    const url = getShareUrl();
+    const text = getShareText();
+    const hashtags = "Handicrafts,Punjab";
+    const shareUrl = `https://twitter.com/intent/tweet?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}&hashtags=${encodeURIComponent(hashtags)}`;
+    try {
+      const ok = openShareWindow(shareUrl);
+      await trackShareEvent("twitter", ok);
+      if (!ok) throw new Error("Popup blocked");
+    } catch (e: any) {
+      toast({ title: "Share failed", description: "Unable to share on X/Twitter", variant: "destructive" });
+    }
+  };
+
+  const handleCopyLink = async () => {
+    const url = getShareUrl();
+    try {
+      await navigator.clipboard.writeText(url);
+      await trackShareEvent("copy_link", true);
+      toast({ title: "Link copied", description: "Product link copied to clipboard" });
+    } catch (e: any) {
+      await trackShareEvent("copy_link", false, String(e?.message || e));
+      toast({ title: "Copy failed", description: "Unable to copy product link", variant: "destructive" });
+    }
   };
 
   if (productError) {
@@ -325,31 +456,168 @@ export default function ProductDetail() {
     }
   }
 
+  const relatedProducts = (() => {
+    const byCategory = (categoryRelated?.products || []).filter(p => p.id !== product.id);
+    const byBrand = (brandRelated?.products || []).filter(p => p.id !== product.id);
+    const byDistrict = (districtRelated?.products || []).filter(p => p.id !== product.id);
+    const byFallback = (moreApproved?.products || []).filter(p => p.id !== product.id);
+    const map = new Map<string, any>();
+    for (const p of [...byCategory, ...byBrand, ...byDistrict, ...byFallback]) {
+      if (!map.has(p.id)) map.set(p.id, p);
+    }
+    const combined = Array.from(map.values());
+    const min4 = combined.slice(0, Math.max(4, combined.length));
+    return min4;
+  })();
+
+  useEffect(() => {
+    if (product) {
+      try {
+        addRecentlyViewed({
+          id: product.id,
+          title: product.title,
+          price: Number(product.price),
+          discountedPrice: discounted,
+          image: images[0] || "",
+          district: product.district,
+          giBrand: product.giBrand,
+          vendorName: "",
+          storeId: product.storeId,
+          stock: Number(product.stock || 0)
+        })
+      } catch {}
+    }
+  }, [product, discounted, images])
+
   return (
     <div className="min-h-screen flex flex-col">
       <Header />
       <main className="flex-1">
         <div className="container mx-auto px-4 py-8">
-          <Button
-            variant="ghost"
-            onClick={() => setLocation('/products')}
-            className="mb-6"
-            data-testid="button-back"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Products
-          </Button>
-
+          <Breadcrumb role="navigation" aria-label="Breadcrumb" className="mb-4">
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbLink asChild>
+                  <Link href="/" className="max-w-[10rem] truncate">
+                    Home
+                  </Link>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbLink asChild>
+                  <Link href="/products" className="max-w-[10rem] truncate sm:max-w-[14rem]">
+                    Products
+                  </Link>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage className="max-w-[45vw] truncate sm:max-w-none">
+                  {product.title}
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div className="space-y-4">
-              <div className="aspect-square bg-muted rounded-lg overflow-hidden">
+              <div className="aspect-square bg-muted rounded-lg overflow-hidden relative">
                 {images.length > 0 ? (
-                  <img
-                    src={images[selectedImage]}
-                    alt={product.title}
-                    className="w-full h-full object-cover"
-                    data-testid="img-product-main"
-                  />
+                  <TransformWrapper
+                    ref={zoomRef}
+                    key={images[selectedImage] || selectedImage}
+                    initialScale={1}
+                    minScale={1}
+                    maxScale={4}
+                    doubleClick={{ disabled: false, mode: "zoomIn" }}
+                    wheel={{ disabled: false, step: 0.15 }}
+                    pinch={{ disabled: false }}
+                    panning={{ disabled: false, lockAxisX: false, lockAxisY: false }}
+                    zoomAnimation={{ animationTime: 200, animationType: "easeOut" }}
+                  >
+                    {({ zoomIn, zoomOut, resetTransform, setTransform }) => (
+                      <div className="w-full h-full">
+                        <div
+                          className="absolute top-2 right-2 z-10 flex gap-2"
+                          role="toolbar"
+                          aria-label="Image zoom controls"
+                        >
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            aria-label="Zoom in"
+                            data-testid="button-zoom-in"
+                            onClick={() => zoomIn()}
+                          >
+                            <Plus className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            aria-label="Zoom out"
+                            data-testid="button-zoom-out"
+                            onClick={() => zoomOut()}
+                          >
+                            <Minus className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            aria-label="Reset zoom"
+                            data-testid="button-zoom-reset"
+                            onClick={() => resetTransform()}
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                          </Button>
+                        </div>
+                        <div
+                          tabIndex={0}
+                          role="group"
+                          aria-label="Product image viewer"
+                          aria-describedby="product-image-instructions"
+                          className="w-full h-full outline-none"
+                          onKeyDown={(e) => {
+                            const step = 20;
+                            const s = zoomRef.current?.instance.transformState;
+                            const scale = s?.scale ?? 1;
+                            const positionX = s?.positionX ?? 0;
+                            const positionY = s?.positionY ?? 0;
+                            if (e.key === "ArrowRight") {
+                              setTransform(positionX - step, positionY, scale);
+                            } else if (e.key === "ArrowLeft") {
+                              setTransform(positionX + step, positionY, scale);
+                            } else if (e.key === "ArrowUp") {
+                              setTransform(positionX, positionY + step, scale);
+                            } else if (e.key === "ArrowDown") {
+                              setTransform(positionX, positionY - step, scale);
+                            } else if (e.key === "+") {
+                              zoomIn();
+                            } else if (e.key === "-") {
+                              zoomOut();
+                            } else if (e.key === "Escape" || e.key === "0") {
+                              resetTransform();
+                            }
+                          }}
+                          data-testid="container-image-zoom"
+                        >
+                          <TransformComponent wrapperStyle={{ width: "100%", height: "100%", willChange: "transform" }}>
+                            <div className="w-full h-full">
+                              <img
+                                src={images[selectedImage]}
+                                alt={product.title}
+                                className="w-full h-full object-contain select-none"
+                                data-testid="img-product-main"
+                                draggable={false}
+                              />
+                            </div>
+                          </TransformComponent>
+                        </div>
+                        <span id="product-image-instructions" className="sr-only">
+                          Use mouse wheel or pinch to zoom. Drag to pan when zoomed. Use plus and minus buttons, or keyboard plus/minus. Arrow keys pan; Escape resets.
+                        </span>
+                      </div>
+                    )}
+                  </TransformWrapper>
                 ) : (
                   <div className="w-full h-full flex items-center justify-center bg-muted">
                     <p className="text-muted-foreground">No image available</p>
@@ -380,9 +648,12 @@ export default function ProductDetail() {
 
             <div className="space-y-6">
               <div>
-                <h1 className="text-3xl font-bold mb-2" data-testid="text-product-title">
-                  {product.title}
-                </h1>
+                <div className="flex items-start justify-between gap-3">
+                  <h1 className="text-3xl font-bold mb-2" data-testid="text-product-title">
+                    {product.title}
+                  </h1>
+                  <WishlistButton productId={product.id} variant="outline" size="sm" stopPropagation={false} />
+                </div>
                 {percent != null && (
                   <div className="flex items-center gap-2">
                     <DiscountBadge percent={percent} tone={tone || "destructive"} size="md" />
@@ -592,6 +863,50 @@ export default function ProductDetail() {
                 </Button>
               </div>
 
+              <div className="space-y-3">
+                <h3 className="font-semibold">Share</h3>
+                <div className="flex items-center gap-3 flex-wrap" role="group" aria-label="Share this product">
+                  <button
+                    type="button"
+                    onClick={handleShareWhatsApp}
+                    aria-label="Share on WhatsApp"
+                    data-testid="button-share-whatsapp"
+                    className="p-2 rounded-full transition transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2"
+                    style={{ backgroundColor: "#25D366" }}
+                  >
+                    <SiWhatsapp size={24} color="#ffffff" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleShareFacebook}
+                    aria-label="Share on Facebook"
+                    data-testid="button-share-facebook"
+                    className="p-2 rounded-full transition transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2"
+                    style={{ backgroundColor: "#1877F2" }}
+                  >
+                    <SiFacebook size={24} color="#ffffff" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleShareTwitter}
+                    aria-label="Share on X"
+                    data-testid="button-share-twitter"
+                    className="p-2 rounded-full transition transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 bg-black"
+                  >
+                    <SiX size={24} color="#ffffff" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyLink}
+                    aria-label="Copy product link"
+                    data-testid="button-copy-link"
+                    className="p-2 rounded-full transition transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 border border-input"
+                  >
+                    <LinkIcon className="w-6 h-6 text-foreground" />
+                  </button>
+                </div>
+              </div>
+
               <Separator />
 
               {storeError ? (
@@ -645,13 +960,13 @@ export default function ProductDetail() {
                   </CardContent>
                 </Card>
               ) : null}
-            </div>
           </div>
-          {(() => {
-            const data = {
-              "@context": "https://schema.org",
-              "@type": "Product",
-              name: product.title,
+        </div>
+        {(() => {
+          const data = {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            name: product.title,
               image: images[0] || undefined,
               description: product.description || undefined,
               brand: { "@type": "Brand", name: product.giBrand },
@@ -834,6 +1149,49 @@ export default function ProductDetail() {
             )}
           </div>
         </div>
+        {relatedProducts.length > 0 ? (
+          <div className="mt-12">
+            <div className="container mx-auto px-4">
+              <div className="flex items-center justify-between mb-4">
+                <div className="space-y-1">
+                  <h2 className="text-2xl font-semibold">Related Products</h2>
+                  <p className="text-muted-foreground">
+                    Mainly from {product.category}{product.giBrand ? ` • ${product.giBrand}` : ''}
+                  </p>
+                </div>
+              </div>
+              <Carousel opts={{ loop: true, align: 'start' }} className="relative">
+                <CarouselContent>
+                  {relatedProducts.map((p: any) => (
+                    <CarouselItem key={p.id} className="basis-3/4 sm:basis-1/2 md:basis-1/3 lg:basis-1/4">
+                      <ProductCard
+                        id={p.id}
+                        title={p.title}
+                        description={p.description || ""}
+                        price={Number(p.price)}
+                        discountedPrice={p.discountedPrice != null ? Number(p.discountedPrice) : undefined}
+                        image={(p.images || [])[0] || ""}
+                        district={p.district}
+                        giBrand={p.giBrand}
+                        vendorName={p.vendorName || ""}
+                        storeId={p.storeId}
+                        stock={Number(p.stock || 0)}
+                        ratingAverage={Number(p.ratingAverage || 0)}
+                        ratingCount={Number(p.ratingCount || 0)}
+                        promotionPercent={p.promotionPercent != null ? Number(p.promotionPercent) : undefined}
+                        promotionTone={p.promotionTone}
+                        promotionEndsAt={p.promotionEndsAt || undefined}
+                      />
+                    </CarouselItem>
+                  ))}
+                </CarouselContent>
+                <CarouselPrevious className="left-2 sm:-left-2 z-10" />
+                <CarouselNext className="right-2 sm:-right-2 z-10" />
+              </Carousel>
+            </div>
+          </div>
+        ) : null}
+        <RecentlyViewed />
       </main>
       <Footer />
     </div >

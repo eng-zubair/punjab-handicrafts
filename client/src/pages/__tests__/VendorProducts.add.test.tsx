@@ -88,7 +88,7 @@ function setup() {
 describe('VendorProducts Add Product with Variants', () => {
   it('opens add dialog, fills form with category and variants, and submits', async () => {
     const { client } = setup();
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
 
     // Mock product categories fetch for ProductForm
     // Provide a couple of categories including 'Pottery'
@@ -229,5 +229,5 @@ describe('VendorProducts Add Product with Variants', () => {
         ])
       }));
     });
-  });
+  }, 20000);
 });

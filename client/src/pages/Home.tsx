@@ -6,13 +6,16 @@ import ProductCard from "@/components/ProductCard";
 import VendorCard from "@/components/VendorCard";
 import Footer from "@/components/Footer";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Loader2 } from "lucide-react";
-import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
+import { ArrowRight, Loader2, Star } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import type { Category, Product, Store, ProductCategory } from "@shared/schema";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, PaginationNext, PaginationLink, PaginationEllipsis } from "@/components/ui/pagination";
 
 import multanImage from '@assets/generated_images/Multan_blue_pottery_workshop_21555b73.png';
 import bahawalpurImage from '@assets/generated_images/Bahawalpur_Ralli_quilts_display_07a38e65.png';
@@ -62,65 +65,36 @@ export default function Home() {
   const [giFilter, setGiFilter] = useState<string>('all');
   const [catFilter, setCatFilter] = useState<string>('all');
 
-  // Infinite products query (newest first)
+  // Paged products query (newest first) - 20 per page
   type ProductsPage = { products: Product[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } };
-  const infiniteParams = useMemo(() => {
-    const params: Record<string, string | number> = { status: 'approved', pageSize: 20 };
+  const [page, setPage] = useState<number>(1);
+  const pageSize = 20;
+  const pagedParams = useMemo(() => {
+    const params: Record<string, string | number> = { status: 'approved', page: page, pageSize };
     if (giFilter !== 'all') params.giBrand = giFilter;
     if (catFilter !== 'all') params.category = catFilter;
     return params;
-  }, [giFilter, catFilter]);
+  }, [giFilter, catFilter, page]);
   const {
-    data: pagedProducts,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-    isLoading: productsInfiniteLoading,
-    isError: productsInfiniteError,
-    error: productsInfiniteErrorObj,
-    refetch: refetchInfinite,
-  } = useInfiniteQuery<ProductsPage, Error>(
-    {
-      queryKey: ['/api/products', infiniteParams],
-      queryFn: async ({ pageParam = 1, queryKey }) => {
-        const [, params] = queryKey as [string, Record<string, any>];
-        const search = new URLSearchParams({ ...params, page: String(pageParam) });
-        const res = await fetch(`/api/products?${search.toString()}`, { credentials: 'include' });
-        if (!res.ok) throw new Error(await res.text());
-        return (await res.json()) as ProductsPage;
-      },
-      getNextPageParam: (last) => {
-        const next = (last?.pagination?.page || 1) + 1;
-        return next <= (last?.pagination?.totalPages || 0) ? next : undefined;
-      },
-      initialPageParam: 1,
-      staleTime: Infinity,
-      retry: false,
-    }
-  );
-
-  // Intersection Observer for infinite scrolling
-  const loadMoreRef = useRef<HTMLDivElement | null>(null);
-  const lastFetchAtRef = useRef<number>(0);
+    data: productsPage,
+    isLoading: productsPageLoading,
+    isError: productsPageError,
+    refetch: refetchProductsPage,
+  } = useQuery<ProductsPage>({
+    queryKey: ['/api/products', pagedParams],
+  });
   useEffect(() => {
-    const target = loadMoreRef.current;
-    if (!target) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (!entry.isIntersecting) return;
-        const now = Date.now();
-        if (isFetchingNextPage) return;
-        if (hasNextPage && now - lastFetchAtRef.current > 500) {
-          lastFetchAtRef.current = now;
-          fetchNextPage();
-        }
-      },
-      { root: null, rootMargin: '300px', threshold: 0 }
-    );
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
+    setPage(1);
+  }, [giFilter, catFilter]);
+  const productsTopRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = productsTopRef.current;
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [page]);
+
+  // Remove infinite scroll; pagination controls are provided below
 
   // Create GI brands from all categories
   const giBrands = categoriesData?.map(cat => ({
@@ -154,6 +128,87 @@ export default function Home() {
     totalProducts: productsResponse?.products.filter(p => p.storeId === store.id).length || 0,
     avatar: vendorAvatar,
   })) || [];
+
+  type Testimonial = {
+    id: string;
+    name: string;
+    title?: string;
+    company?: string;
+    quote: string;
+    imageUrl?: string;
+    rating?: number;
+  };
+
+  const testimonials: Testimonial[] = [
+    {
+      id: "t1",
+      name: "Ayesha Khan",
+      title: "Designer",
+      company: "Lahore Craft Co.",
+      quote: "The craftsmanship is outstanding. These pieces bring authentic Punjab artistry into my work.",
+      imageUrl: vendorAvatar,
+      rating: 5,
+    },
+    {
+      id: "t2",
+      name: "Bilal Ahmed",
+      title: "Buyer",
+      company: "Multan",
+      quote: "Beautiful, well-made, and delivered quickly. I’ll definitely shop here again.",
+      imageUrl: vendorAvatar,
+      rating: 4,
+    },
+    {
+      id: "t3",
+      name: "Zainab Fatima",
+      title: "Interior Stylist",
+      company: "Bahawalpur",
+      quote: "Authentic GI brands with incredible detail. My clients love these unique accents.",
+      imageUrl: vendorAvatar,
+      rating: 5,
+    },
+  ];
+
+  function TestimonialCard({ name, title, company, quote, imageUrl, rating }: Testimonial) {
+    const initials = name
+      .split(" ")
+      .map(w => w[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
+    const stars = Array.from({ length: 5 }).map((_, i) => (
+      <Star key={i} className={`w-4 h-4 ${i < (Math.floor(rating || 0)) ? "fill-primary text-primary" : ""}`} aria-hidden="true" />
+    ));
+    return (
+      <Card className="hover-elevate active-elevate-2 h-full" role="article" aria-label={`Testimonial from ${name}`}>
+        <CardHeader className="flex flex-row items-center gap-4">
+          <Avatar className="w-14 h-14">
+            <AvatarImage src={imageUrl} alt={name} />
+            <AvatarFallback aria-hidden="true">{initials}</AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <CardTitle className="text-lg truncate">{name}</CardTitle>
+            <p className="text-sm text-muted-foreground truncate">
+              {title ? title : ""}{title && company ? " • " : ""}{company ? company : ""}
+            </p>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {rating ? (
+            <div className="flex items-center gap-1" aria-label={`${rating} out of 5 stars`}>
+              {stars}
+              <span className="text-sm text-muted-foreground">{Number(rating).toFixed(1)}</span>
+            </div>
+          ) : null}
+          <blockquote className="text-base leading-relaxed">
+            <span aria-hidden="true">“</span>
+            {quote}
+            <span aria-hidden="true">”</span>
+          </blockquote>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const isLoading = categoriesLoading || productsLoading || storesLoading;
 
@@ -263,7 +318,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="bg-muted/30 py-16">
+        <section id="products-section" className="bg-muted/30 py-16">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between mb-6 gap-4">
               <div>
@@ -302,61 +357,114 @@ export default function Home() {
               </div>
             </div>
 
-          {productsInfiniteError ? (
+          <div ref={productsTopRef} />
+
+          {productsPageError ? (
             <div className="rounded-lg border bg-card p-6">
               <p className="text-sm text-destructive">Failed to load products</p>
-              <Button size="sm" className="mt-3" onClick={() => refetchInfinite()}>Retry</Button>
+              <Button size="sm" className="mt-3" onClick={() => refetchProductsPage()}>Retry</Button>
             </div>
           ) : (
-            <div className="space-y-6">
-              {(pagedProducts?.pages || []).map((page, idx) => (
-                <div key={`page-${idx}`}>
-                  <div className="flex items-center gap-3 my-2">
-                    <div className="h-px bg-muted flex-1" />
-                    <Badge variant="outline">Batch {idx + 1}</Badge>
-                    <div className="h-px bg-muted flex-1" />
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-                    {page.products.map((product) => (
-                      <ProductCard
-                        key={product.id}
-                        id={product.id}
-                        title={product.title}
-                        description={product.description || undefined}
-                        price={Number(product.price)}
-                        image={imagePathMap[product.images[0]] || product.images[0] || multanImage}
-                        district={product.district}
-                        giBrand={product.giBrand}
-                        vendorName={storesData?.find(s => s.id === product.storeId)?.name || "Artisan Vendor"}
-                        storeId={product.storeId}
-                        stock={product.stock}
-                        ratingAverage={(product as any).ratingAverage || 0}
-                        ratingCount={(product as any).ratingCount || 0}
-                      />
-                    ))}
-                  </div>
-                </div>
-              ))}
-
-              {productsInfiniteLoading && !pagedProducts ? (
+            <>
+              {productsPageLoading && !productsPage ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-                  {[1,2,3,4,5,6,7,8,9,10].map(i => (
+                  {Array.from({ length: 20 }).map((_, i) => (
                     <div key={i} className="h-80 bg-muted/50 rounded-lg animate-pulse" />
                   ))}
                 </div>
-              ) : null}
-
-              <div ref={loadMoreRef} />
-              {isFetchingNextPage && (
-                <div className="flex items-center justify-center py-4">
-                  <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                  <span className="text-sm text-muted-foreground">Loading more...</span>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                  {(productsPage?.products || []).map((product) => (
+                    <ProductCard
+                      key={product.id}
+                      id={product.id}
+                      title={product.title}
+                      description={product.description || undefined}
+                      price={Number(product.price)}
+                      image={imagePathMap[product.images[0]] || product.images[0] || multanImage}
+                      district={product.district}
+                      giBrand={product.giBrand}
+                      vendorName={storesData?.find(s => s.id === product.storeId)?.name || "Artisan Vendor"}
+                      storeId={product.storeId}
+                      stock={product.stock}
+                      ratingAverage={(product as any).ratingAverage || 0}
+                      ratingCount={(product as any).ratingCount || 0}
+                    />
+                  ))}
                 </div>
               )}
-              {!hasNextPage && pagedProducts && (
-                <p className="text-center text-sm text-muted-foreground">End of list</p>
-              )}
-            </div>
+              <div className="mt-6">
+                {(() => {
+                  const totalPages = productsPage?.pagination?.totalPages || 1;
+                  const buildRange = (current: number, total: number) => {
+                    const s = new Set<number>();
+                    s.add(1);
+                    s.add(total);
+                    s.add(current);
+                    if (current - 1 >= 1) s.add(current - 1);
+                    if (current + 1 <= total) s.add(current + 1);
+                    const arr = Array.from(s).sort((a, b) => a - b);
+                    const tokens: Array<number | "dots"> = [];
+                    for (let i = 0; i < arr.length; i++) {
+                      const p = arr[i];
+                      if (i === 0) {
+                        tokens.push(p);
+                        continue;
+                      }
+                      const prev = arr[i - 1];
+                      if (p - prev === 2) tokens.push(prev + 1);
+                      else if (p - prev > 2) tokens.push("dots");
+                      tokens.push(p);
+                    }
+                    return tokens;
+                  };
+                  const tokens = buildRange(page, totalPages);
+                  return (
+                    <Pagination className="w-full">
+                      <PaginationContent>
+                        <PaginationItem>
+                          <PaginationPrevious
+                            href="#products-section"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              if (page > 1) setPage(page - 1);
+                            }}
+                          />
+                        </PaginationItem>
+                        {tokens.map((t, i) => (
+                          <PaginationItem key={`token-${i}`}>
+                            {t === "dots" ? (
+                              <PaginationEllipsis />
+                            ) : (
+                              <PaginationLink
+                                href="#products-section"
+                                isActive={t === page}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  setPage(t);
+                                }}
+                              >
+                                {t}
+                              </PaginationLink>
+                            )}
+                          </PaginationItem>
+                        ))}
+                        <PaginationItem>
+                          <PaginationNext
+                            href="#products-section"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              const total = totalPages;
+                              if (page < total) setPage(page + 1);
+                            }}
+                          />
+                        </PaginationItem>
+                      </PaginationContent>
+                    </Pagination>
+                  );
+                })()}
+              </div>
+            </>
           )}
           </div>
         </section>
@@ -371,10 +479,12 @@ export default function Home() {
                 Connect with skilled craftspeople preserving traditional arts
               </p>
             </div>
-            <Button variant="ghost" data-testid="button-view-all-vendors">
-              View All
-              <ArrowRight className="ml-2 w-4 h-4" />
-            </Button>
+            <Link href="/stores">
+              <Button variant="ghost" data-testid="button-view-all-vendors">
+                View All
+                <ArrowRight className="ml-2 w-4 h-4" />
+              </Button>
+            </Link>
           </div>
           
           {isLoading ? (
@@ -392,6 +502,32 @@ export default function Home() {
           )}
         </section>
 
+        <section aria-labelledby="testimonials-heading" className="bg-muted/30 py-16">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h2 id="testimonials-heading" className="text-3xl font-bold mb-2">
+                  What Customers Say
+                </h2>
+                <p className="text-muted-foreground">Real feedback from our buyers and partners</p>
+              </div>
+            </div>
+            <Carousel opts={{ align: "start" }}>
+              <CarouselContent>
+                {testimonials.map(t => (
+                  <CarouselItem key={t.id} className="basis-full sm:basis-1/2 lg:basis-1/3">
+                    <div className="p-2 h-full">
+                      <TestimonialCard {...t} />
+                    </div>
+                  </CarouselItem>
+                ))}
+              </CarouselContent>
+              <CarouselPrevious className="-left-6" />
+              <CarouselNext className="-right-6" />
+            </Carousel>
+          </div>
+        </section>
+
         <section className="bg-primary text-primary-foreground py-16">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
             <h2 className="text-3xl font-bold mb-4" data-testid="text-cta-heading">
@@ -402,22 +538,28 @@ export default function Home() {
               Create your store in minutes and start earning.
             </p>
             <div className="flex gap-4 justify-center flex-wrap">
-              <Button 
-                size="lg" 
-                variant="secondary"
-                data-testid="button-get-started"
-              >
-                Get Started
-                <ArrowRight className="ml-2 w-5 h-5" />
-              </Button>
-              <Button 
-                size="lg" 
-                variant="outline" 
-                className="border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10"
-                data-testid="button-learn-more"
-              >
-                Learn More
-              </Button>
+              <Link href="/vendor/register">
+                <Button 
+                  size="lg" 
+                  variant="secondary"
+                  data-testid="button-get-started"
+                  aria-label="Get started selling"
+                >
+                  Get Started
+                  <ArrowRight className="ml-2 w-5 h-5" />
+                </Button>
+              </Link>
+              <Link href="/vendor/guide">
+                <Button 
+                  size="lg" 
+                  variant="outline" 
+                  className="border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10"
+                  data-testid="button-learn-more"
+                  aria-label="Learn more about selling"
+                >
+                  Learn More
+                </Button>
+              </Link>
             </div>
           </div>
         </section>

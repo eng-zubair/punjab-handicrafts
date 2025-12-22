@@ -468,13 +468,12 @@ export default function ProductForm({
           aria-label={mode === "create" ? "Add Product" : "Edit Product"}
         >
           {/* Step 1: Basic Information */}
-          {currentStep === 1 && (
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-4"
-            >
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className="space-y-4"
+          >
               <FormField
                 control={form.control}
                 name="title"
@@ -618,16 +617,14 @@ export default function ProductForm({
                 )}
               />
             </motion.div>
-          )}
 
           {/* Step 2: Pricing & Media */}
-          {currentStep === 2 && (
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-4"
-            >
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className="space-y-4"
+          >
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
@@ -737,16 +734,14 @@ export default function ProductForm({
                 )}
               />
             </motion.div>
-          )}
 
           {/* Step 3: Variants */}
-          {currentStep === 3 && (
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-4"
-            >
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className="space-y-4"
+          >
               <FormField
                 control={form.control}
                 name="hasVariants"
@@ -1052,7 +1047,6 @@ export default function ProductForm({
                 </div>
               )}
             </motion.div>
-          )}
 
           <div className="flex justify-between pt-4 border-t">
             {currentStep > 1 ? (
@@ -1071,12 +1065,13 @@ export default function ProductForm({
               </Button>
             )}
 
-            {currentStep < 3 ? (
-              <Button type="button" onClick={nextStep}>
-                Next
-                <ArrowRight className="w-4 h-4 ml-2" />
-              </Button>
-            ) : (
+            <div className="flex gap-2">
+              {currentStep < 3 && (
+                <Button type="button" onClick={nextStep}>
+                  Next
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+              )}
               <Button
                 type="submit"
                 disabled={mutation.isPending}
@@ -1097,7 +1092,7 @@ export default function ProductForm({
                   : submitText ??
                   (mode === "create" ? "Add Product" : "Update Product")}
               </Button>
-            )}
+            </div>
           </div>
         </form>
       </Form>

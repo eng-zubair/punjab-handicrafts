@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
     Dialog,
     DialogContent,
@@ -38,6 +40,13 @@ export default function PromotionsTab() {
     const { toast } = useToast();
     const [isCreateOpen, setIsCreateOpen] = useState(false);
     const [selectedPromotion, setSelectedPromotion] = useState<Promotion | null>(null);
+    const [attachPromotion, setAttachPromotion] = useState<Promotion | null>(null);
+
+    const { data: products = [] } = useQuery<any[]>({
+        queryKey: ["/api/vendor/products"],
+    });
+
+    const [productSelection, setProductSelection] = useState<Record<string, { selected: boolean; quantityLimit: string; overridePrice: string }>>({});
 
     const { data: promotions = [], isLoading } = useQuery<Promotion[]>({
         queryKey: ["/api/vendor/promotions"],
@@ -99,6 +108,24 @@ export default function PromotionsTab() {
         },
         onError: (err: any) => {
             console.error("❌ Promotion creation error:", err);
+            toast({ title: "Error", description: err.message, variant: "destructive" });
+        },
+    });
+
+    const attachProductsMutation = useMutation({
+        mutationFn: async ({ promotionId, items }: { promotionId: string; items: Array<{ productId: string; quantityLimit?: number; overridePrice?: string | null }> }) => {
+            await apiRequest("POST", `/api/vendor/promotions/${promotionId}/products/bulk`, { items });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["/api/vendor/promotion-products"] });
+            toast({
+                title: "Products Attached",
+                description: "Selected products have been added to the promotion.",
+            });
+            setAttachPromotion(null);
+            setProductSelection({});
+        },
+        onError: (err: any) => {
             toast({ title: "Error", description: err.message, variant: "destructive" });
         },
     });
@@ -225,9 +252,27 @@ export default function PromotionsTab() {
                                     </div>
 
                                     <div className="flex gap-2 pt-2">
-                                        <Button variant="outline" size="sm" className="flex-1" onClick={() => setSelectedPromotion(promo)}>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="flex-1"
+                                            onClick={() => setSelectedPromotion(promo)}
+                                        >
                                             <Edit className="mr-2 h-3 w-3" />
                                             Manage
+                                        </Button>
+
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="flex-1"
+                                            onClick={() => {
+                                                setAttachPromotion(promo);
+                                                setProductSelection({});
+                                            }}
+                                            data-testid={`button-attach-products-${promo.id}`}
+                                        >
+                                            Attach Products
                                         </Button>
 
                                         <AlertDialog>
@@ -322,6 +367,172 @@ export default function PromotionsTab() {
                             {selectedPromotion && <PromotionActionBuilder promotionId={selectedPromotion.id} />}
                         </TabsContent>
                     </Tabs>
+                </DialogContent>
+            </Dialog>
+
+            {/* Attach Products Dialog */}
+            <Dialog
+                open={!!attachPromotion}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setAttachPromotion(null);
+                        setProductSelection({});
+                    }
+                }}
+            >
+                <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>Add Products to Promotion</DialogTitle>
+                        <DialogDescription>
+                            Select products to include in this promotion and configure optional limits.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {!attachPromotion ? null : (
+                        <div className="space-y-4">
+                            {products.length === 0 ? (
+                                <p className="text-sm text-muted-foreground">
+                                    No products available to attach.
+                                </p>
+                            ) : (
+                                <div className="space-y-3">
+                                    {products.map((product: any) => {
+                                        const state = productSelection[product.id] || {
+                                            selected: false,
+                                            quantityLimit: "1",
+                                            overridePrice: "",
+                                        };
+
+                                        return (
+                                            <div
+                                                key={product.id}
+                                                className="flex items-center justify-between gap-4 border rounded-lg p-3"
+                                            >
+                                                <div className="flex items-start gap-3">
+                                                    <Checkbox
+                                                        checked={state.selected}
+                                                        onCheckedChange={(checked) => {
+                                                            const isChecked = checked === true;
+                                                            setProductSelection((prev) => ({
+                                                                ...prev,
+                                                                [product.id]: {
+                                                                    selected: isChecked,
+                                                                    quantityLimit: state.quantityLimit,
+                                                                    overridePrice: state.overridePrice,
+                                                                },
+                                                            }));
+                                                        }}
+                                                        data-testid={`checkbox-select-product-${product.id}`}
+                                                    />
+                                                    <div>
+                                                        <div className="font-medium">
+                                                            {product.title}
+                                                        </div>
+                                                        <div className="text-xs text-muted-foreground">
+                                                            PKR {product.price}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex items-center gap-3">
+                                                    <div className="flex flex-col">
+                                                        <span className="text-xs text-muted-foreground">
+                                                            Quantity Limit
+                                                        </span>
+                                                        <Input
+                                                            type="number"
+                                                            min={1}
+                                                            value={state.quantityLimit}
+                                                            onChange={(e) => {
+                                                                const value = e.target.value;
+                                                                setProductSelection((prev) => ({
+                                                                    ...prev,
+                                                                    [product.id]: {
+                                                                        selected: state.selected,
+                                                                        quantityLimit: value,
+                                                                        overridePrice: state.overridePrice,
+                                                                    },
+                                                                }));
+                                                            }}
+                                                            className="w-24"
+                                                            data-testid={`input-quantity-limit-${product.id}`}
+                                                        />
+                                                    </div>
+                                                    <div className="flex flex-col">
+                                                        <span className="text-xs text-muted-foreground">
+                                                            Override Price (PKR)
+                                                        </span>
+                                                        <Input
+                                                            type="number"
+                                                            min={0}
+                                                            value={state.overridePrice}
+                                                            onChange={(e) => {
+                                                                const value = e.target.value;
+                                                                setProductSelection((prev) => ({
+                                                                    ...prev,
+                                                                    [product.id]: {
+                                                                        selected: state.selected,
+                                                                        quantityLimit: state.quantityLimit,
+                                                                        overridePrice: value,
+                                                                    },
+                                                                }));
+                                                            }}
+                                                            className="w-28"
+                                                            data-testid={`input-override-price-${product.id}`}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            <div className="flex justify-end gap-2 pt-2">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => {
+                                        setAttachPromotion(null);
+                                        setProductSelection({});
+                                    }}
+                                >
+                                    Cancel
+                                </Button>
+                                <Button
+                                    onClick={() => {
+                                        if (!attachPromotion) return;
+                                        const items = Object.entries(productSelection)
+                                            .filter(([, state]) => state.selected)
+                                            .map(([productId, state]) => ({
+                                                productId,
+                                                quantityLimit: state.quantityLimit
+                                                    ? Number(state.quantityLimit)
+                                                    : undefined,
+                                                overridePrice: state.overridePrice || undefined,
+                                            }));
+
+                                        if (items.length === 0) {
+                                            toast({
+                                                title: "No products selected",
+                                                description: "Select at least one product to attach.",
+                                                variant: "destructive",
+                                            });
+                                            return;
+                                        }
+
+                                        attachProductsMutation.mutate({
+                                            promotionId: attachPromotion.id,
+                                            items,
+                                        });
+                                    }}
+                                    disabled={attachProductsMutation.isPending}
+                                    data-testid="button-submit-attach"
+                                >
+                                    {attachProductsMutation.isPending ? "Attaching..." : "Attach Selected"}
+                                </Button>
+                            </div>
+                        </div>
+                    )}
                 </DialogContent>
             </Dialog>
         </div>
