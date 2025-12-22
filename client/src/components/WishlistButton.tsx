@@ -9,6 +9,7 @@ interface WishlistButtonProps {
   size?: "icon" | "default" | "sm" | "lg";
   variant?: "ghost" | "outline" | "default" | "secondary" | "destructive";
   stopPropagation?: boolean;
+  className?: string;
 }
 
 export default function WishlistButton({
@@ -16,6 +17,7 @@ export default function WishlistButton({
   size = "icon",
   variant = "ghost",
   stopPropagation = true,
+  className,
 }: WishlistButtonProps) {
   const { isSaved, toggle } = useWishlist();
   const { isAuthenticated } = useAuth();
@@ -48,7 +50,7 @@ export default function WishlistButton({
       }}
       data-testid={`button-wishlist-${productId}`}
       aria-label={saved ? "Unsave product" : "Save product"}
-      className={size === "icon" ? "rounded-full" : undefined}
+      className={(size === "icon" ? "rounded-full " : "") + (className || "")}
     >
       <Heart className={"w-4 h-4 " + (saved ? "text-primary fill-current" : "text-primary")} />
       {size !== "icon" ? <span className="ml-2">{saved ? "Saved" : "Save"}</span> : null}

@@ -12,6 +12,7 @@ import { formatPrice } from "@/lib/utils/price";
 import { normalizeImagePath } from "@/lib/utils/image";
 import WishlistButton from "@/components/WishlistButton";
 import QuickViewDialog from "@/components/QuickViewDialog";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface ProductCardProps {
   id: string;
@@ -54,6 +55,7 @@ export default function ProductCard({
   const [quickOpen, setQuickOpen] = useState(false);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const isMobile = useIsMobile();
 
   const handleCardClick = () => {
     setLocation(`/products/${id}`);
@@ -99,23 +101,22 @@ export default function ProductCard({
             className="w-full h-full object-cover transition-transform duration-300"
             style={{ transform: isHovered ? 'scale(1.05)' : 'scale(1)' }}
           />
-          <div className="absolute top-2 right-2 flex flex-col gap-2 items-end">
+          <div className="absolute top-2 right-2 flex flex-col items-end gap-2">
             <DistrictBadge district={district} />
-            {isHovered ? <div className="mt-1"><WishlistButton productId={id} /></div> : null}
-          </div>
-          {isHovered ? (
-            <div className="absolute bottom-2 left-2">
+            <div className={"overlay-icon-stack " + ((isHovered || isMobile) ? "overlay-icon-visible" : "overlay-icon-hidden")}>
+              <WishlistButton productId={id} className="overlay-icon" variant="ghost" size="icon" />
               <Button
-                variant="secondary"
+                variant="ghost"
                 size="icon"
                 onClick={(e) => { e.stopPropagation(); setQuickOpen(true); }}
                 aria-label="Quick view"
                 data-testid={`button-quick-view-${id}`}
+                className="overlay-icon"
               >
                 <Eye className="w-4 h-4" />
               </Button>
             </div>
-          ) : null}
+          </div>
           {promotionPercent != null && (
             <div className="absolute top-2 left-2 flex items-center gap-2">
               <DiscountBadge percent={promotionPercent} tone={promotionTone || "destructive"} size="md" />
@@ -170,15 +171,6 @@ export default function ProductCard({
           >
             <ShoppingCart className="w-4 h-4 mr-2" />
             Add to Cart
-          </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            className="hidden sm:inline-flex"
-            onClick={(e) => { e.stopPropagation(); setQuickOpen(true); }}
-            aria-label="Quick view"
-          >
-            <Eye className="w-4 h-4" />
           </Button>
         </div>
         <QuickViewDialog productId={id} open={quickOpen} onOpenChange={setQuickOpen} />

@@ -35,6 +35,14 @@ import { SiWhatsapp, SiFacebook, SiX } from "react-icons/si";
 import RecentlyViewed from "@/components/RecentlyViewed";
 import { addRecentlyViewed } from "@/lib/recentlyViewed";
 
+if (typeof window !== "undefined" && typeof (window as any).ResizeObserver !== "function") {
+  (window as any).ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
 type Store = {
   id: string;
   vendorId: string;
@@ -139,6 +147,56 @@ export default function ProductDetail() {
     queryKey: ["/api/products", { page: 1, pageSize: 24 }],
     enabled: needMoreFallback,
   });
+
+  useEffect(() => {
+    if (product) {
+      try {
+        const imagesLocal = normalizeImagePaths(
+          selectedVariant?.images && selectedVariant.images.length > 0
+            ? selectedVariant.images
+            : product.images
+        );
+        const priceNumLocal = selectedVariant ? Number(selectedVariant.price) : Number(product.price);
+        const promoLocal = (activePromotions || []).find(p => p.productId === product.id);
+        let discountedLocal: number | undefined = undefined;
+        if (selectedVariant) {
+          const vp = variantPromos.find((p: any) => p.targetId === selectedVariant.sku);
+          if (vp) {
+            if (vp.type === 'percentage') {
+              const pct = parseFloat(vp.value);
+              discountedLocal = Math.max(0, priceNumLocal * (100 - pct) / 100);
+            } else if (vp.type === 'fixed') {
+              const val = parseFloat(vp.value);
+              discountedLocal = Math.max(0, priceNumLocal - val);
+            } else if (vp.type === 'override' || vp.type === 'fixed_override') {
+              const val = parseFloat(vp.value);
+              discountedLocal = Math.max(0, val);
+            }
+          }
+        } else if (promoLocal) {
+          if (promoLocal.type === 'percentage') {
+            const pct = parseFloat(promoLocal.value);
+            discountedLocal = Math.max(0, priceNumLocal * (100 - pct) / 100);
+          } else if (promoLocal.type === 'fixed') {
+            const val = parseFloat(promoLocal.value);
+            discountedLocal = Math.max(0, priceNumLocal - val);
+          }
+        }
+        addRecentlyViewed({
+          id: product.id,
+          title: product.title,
+          price: Number(product.price),
+          discountedPrice: discountedLocal,
+          image: imagesLocal[0] || "",
+          district: product.district,
+          giBrand: product.giBrand,
+          vendorName: "",
+          storeId: product.storeId,
+          stock: Number(product.stock || 0)
+        })
+      } catch {}
+    }
+  }, [product, selectedVariant, activePromotions, variantPromos]);
 
   const handleQuantityChange = (delta: number) => {
     const maxStock = selectedVariant ? selectedVariant.stock : (product?.stock || 0);
@@ -470,24 +528,7 @@ export default function ProductDetail() {
     return min4;
   })();
 
-  useEffect(() => {
-    if (product) {
-      try {
-        addRecentlyViewed({
-          id: product.id,
-          title: product.title,
-          price: Number(product.price),
-          discountedPrice: discounted,
-          image: images[0] || "",
-          district: product.district,
-          giBrand: product.giBrand,
-          vendorName: "",
-          storeId: product.storeId,
-          stock: Number(product.stock || 0)
-        })
-      } catch {}
-    }
-  }, [product, discounted, images])
+  
 
   return (
     <div className="min-h-screen flex flex-col">

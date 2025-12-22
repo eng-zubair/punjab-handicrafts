@@ -56,6 +56,32 @@ const Carousel = React.forwardRef<
     },
     ref
   ) => {
+    if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
+      // Minimal matchMedia polyfill for test environments
+      // Ensures Embla can initialize without errors
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).matchMedia = (query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      })
+    }
+    if (typeof window !== "undefined" && typeof (window as any).IntersectionObserver !== "function") {
+      // Basic IntersectionObserver polyfill for tests
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).IntersectionObserver = class {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        constructor(_cb?: any, _options?: any) {}
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+    }
     const [carouselRef, api] = useEmblaCarousel(
       {
         ...opts,
