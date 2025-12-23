@@ -1,5 +1,5 @@
-import { Switch, Route } from "wouter";
-import { Component } from "react";
+import { Switch, Route, useLocation } from "wouter";
+import { Component, useEffect, useRef } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -50,6 +50,101 @@ import TrainingApply from "@/pages/training/Apply";
 import TrainingDashboard from "@/pages/training/Dashboard";
 import TrainingProgress from "@/pages/training/Progress";
 import ArtisanRegister from "@/pages/artisan/Register";
+
+function NavigationFocusHandler() {
+  const [location] = useLocation();
+  const lastClickRef = useRef<{ href: string | null; time: number } | null>(null);
+  const focusTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const handleClick = (event: MouseEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      let target = event.target as HTMLElement | null;
+      while (target && target !== document.body) {
+        if (target instanceof HTMLAnchorElement) {
+          const href = target.getAttribute("href");
+          if (!href) break;
+          if (typeof window !== "undefined") {
+            const origin = window.location.origin;
+            const isAbsolute = /^https?:\/\//i.test(href);
+            const isExternal = isAbsolute && !href.startsWith(origin);
+            const isHash = href.startsWith("#");
+            if (target.target === "_blank" || target.hasAttribute("download") || isExternal || isHash) {
+              return;
+            }
+          }
+          lastClickRef.current = { href, time: typeof performance !== "undefined" ? performance.now() : Date.now() };
+          return;
+        }
+        target = target.parentElement;
+      }
+    };
+    document.addEventListener("click", handleClick, true);
+    return () => {
+      document.removeEventListener("click", handleClick, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    if (focusTimeoutRef.current != null) {
+      window.clearTimeout(focusTimeoutRef.current);
+      focusTimeoutRef.current = null;
+    }
+    const reduceMotion =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      window.scrollTo(0, 0);
+    } else {
+      window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+    }
+    const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const maxWait = 3000;
+    const attemptFocus = () => {
+      const main = document.querySelector("main");
+      if (main instanceof HTMLElement) {
+        const heading =
+          main.querySelector("h1, h2, h3") ||
+          document.querySelector("h1, h2, h3");
+        const target = (heading as HTMLElement | null) || main;
+        if (!target.hasAttribute("tabindex")) {
+          target.setAttribute("tabindex", "-1");
+        }
+        try {
+          (target as HTMLElement).focus({ preventScroll: true } as any);
+        } catch {
+          (target as HTMLElement).focus();
+        }
+        return;
+      }
+      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      if (now - startedAt < maxWait) {
+        focusTimeoutRef.current = window.setTimeout(attemptFocus, 50);
+      }
+    };
+    if (document.readyState === "loading") {
+      const onReady = () => {
+        attemptFocus();
+        document.removeEventListener("DOMContentLoaded", onReady);
+      };
+      document.addEventListener("DOMContentLoaded", onReady);
+    } else {
+      focusTimeoutRef.current = window.setTimeout(attemptFocus, 0);
+    }
+    return () => {
+      if (focusTimeoutRef.current != null) {
+        window.clearTimeout(focusTimeoutRef.current);
+        focusTimeoutRef.current = null;
+      }
+    };
+  }, [location]);
+
+  return null;
+}
 
 function Router() {
   return (
@@ -147,6 +242,7 @@ function App() {
             <TooltipProvider>
               <Toaster />
               <ErrorBoundary>
+                <NavigationFocusHandler />
                 <Router />
               </ErrorBoundary>
             </TooltipProvider>
