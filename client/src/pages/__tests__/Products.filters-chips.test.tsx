@@ -7,6 +7,7 @@ import "@testing-library/jest-dom/vitest";
 import Products from "@/pages/Products";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { WishlistProvider } from "@/components/WishlistContext";
+import { CompareProvider } from "@/components/CompareContext";
 
 // Simplify framer-motion in tests to avoid exit animation keeping nodes in DOM
 vi.mock("framer-motion", async () => {
@@ -108,9 +109,11 @@ describe("Products filter chips", () => {
     render(
       <ThemeProvider>
         <QueryClientProvider client={client}>
-          <WishlistProvider>
-            <Products />
-          </WishlistProvider>
+          <CompareProvider>
+            <WishlistProvider>
+              <Products />
+            </WishlistProvider>
+          </CompareProvider>
         </QueryClientProvider>
       </ThemeProvider>
     );
@@ -128,9 +131,11 @@ describe("Products filter chips", () => {
     render(
       <ThemeProvider>
         <QueryClientProvider client={client}>
-          <WishlistProvider>
-            <Products />
-          </WishlistProvider>
+          <CompareProvider>
+            <WishlistProvider>
+              <Products />
+            </WishlistProvider>
+          </CompareProvider>
         </QueryClientProvider>
       </ThemeProvider>
     );

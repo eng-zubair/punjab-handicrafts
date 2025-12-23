@@ -15,7 +15,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { AlertCircle, ShoppingCart, Store, MapPin, Award, Minus, Plus, ArrowLeft, Star, RotateCcw, Link as LinkIcon, Truck, Wallet, ShieldCheck } from "lucide-react";
+import { AlertCircle, ShoppingCart, Store, MapPin, Award, Minus, Plus, ArrowLeft, Star, RotateCcw, Link as LinkIcon, Truck, Wallet, ShieldCheck, ArrowLeftRight } from "lucide-react";
 import { useState, useEffect, useMemo, useRef } from "react";
 import type { Product, Variant } from "@shared/schema";
 import { addToCart } from "@/lib/cart";
@@ -37,6 +37,7 @@ import { addRecentlyViewed } from "@/lib/recentlyViewed";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useCompare } from "@/components/CompareContext";
 
 if (typeof window !== "undefined" && typeof (window as any).ResizeObserver !== "function") {
   (window as any).ResizeObserver = class {
@@ -75,6 +76,7 @@ export default function ProductDetail() {
   const [accordionOpen, setAccordionOpen] = useState<string[]>([]);
   const [votes, setVotes] = useState<Record<string, 'up' | 'down'>>({});
   const rqClient = useQueryClient();
+  const { isCompared, toggle, maxItems, count } = useCompare();
 
   const { data: product, isLoading: productLoading, isError: productError, error: productErrorData } = useQuery<Product>({
     queryKey: [`/api/products/${id}`],
@@ -183,6 +185,8 @@ export default function ProductDetail() {
     queryKey: ["/api/products", { page: 1, pageSize: 24 }],
     enabled: needMoreFallback,
   });
+
+  const compared = product ? isCompared(product.id) : false;
 
   useEffect(() => {
     if (product) {
@@ -1076,6 +1080,28 @@ export default function ProductDetail() {
                   data-testid="button-buy-now"
                 >
                   {storeLoading ? 'Loading...' : 'Buy Now'}
+                </Button>
+                <Button
+                  type="button"
+                  variant={compared ? "default" : "outline"}
+                  className="flex-none min-w-32"
+                  disabled={!product}
+                  onClick={() => {
+                    if (!product) return;
+                    if (!compared && count >= maxItems) {
+                      toast({
+                        variant: "destructive",
+                        title: "Comparison limit reached",
+                        description: `You can compare up to ${maxItems} products.`,
+                      });
+                      return;
+                    }
+                    toggle(product.id);
+                  }}
+                  data-testid="button-toggle-compare"
+                >
+                  <ArrowLeftRight className="w-4 h-4 mr-2" />
+                  {compared ? "In Comparison" : "Compare"}
                 </Button>
               </div>
 

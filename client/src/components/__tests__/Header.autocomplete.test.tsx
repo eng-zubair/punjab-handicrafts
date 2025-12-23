@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
 import { WishlistProvider } from "@/components/WishlistContext";
+import { CompareProvider } from "@/components/CompareContext";
 
 function setup() {
   const client = new QueryClient({
@@ -65,9 +66,11 @@ describe("Header autocomplete", () => {
     render(
       <ThemeProvider>
         <QueryClientProvider client={client}>
-          <WishlistProvider>
-            <Header />
-          </WishlistProvider>
+          <CompareProvider>
+            <WishlistProvider>
+              <Header />
+            </WishlistProvider>
+          </CompareProvider>
         </QueryClientProvider>
       </ThemeProvider>,
     );
@@ -114,9 +117,11 @@ describe("Header autocomplete", () => {
     render(
       <ThemeProvider>
         <QueryClientProvider client={client}>
-          <WishlistProvider>
-            <Header />
-          </WishlistProvider>
+          <CompareProvider>
+            <WishlistProvider>
+              <Header />
+            </WishlistProvider>
+          </CompareProvider>
         </QueryClientProvider>
       </ThemeProvider>,
     );

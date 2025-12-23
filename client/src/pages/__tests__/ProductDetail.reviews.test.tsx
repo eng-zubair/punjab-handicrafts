@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ProductDetail from '@/pages/ProductDetail';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { WishlistProvider } from '@/components/WishlistContext';
+import { CompareProvider } from '@/components/CompareContext';
 
 vi.mock('wouter', async () => {
   return {
@@ -78,9 +79,11 @@ describe('ProductDetail reviews display', () => {
     render(
       <ThemeProvider>
         <QueryClientProvider client={client}>
-          <WishlistProvider>
-            <ProductDetail />
-          </WishlistProvider>
+          <CompareProvider>
+            <WishlistProvider>
+              <ProductDetail />
+            </WishlistProvider>
+          </CompareProvider>
         </QueryClientProvider>
       </ThemeProvider>
     );
@@ -107,9 +110,11 @@ describe('ProductDetail reviews display', () => {
     render(
       <ThemeProvider>
         <QueryClientProvider client={client}>
-          <WishlistProvider>
-            <ProductDetail />
-          </WishlistProvider>
+          <CompareProvider>
+            <WishlistProvider>
+              <ProductDetail />
+            </WishlistProvider>
+          </CompareProvider>
         </QueryClientProvider>
       </ThemeProvider>
     );
@@ -130,9 +135,11 @@ describe('ProductDetail reviews display', () => {
     render(
       <ThemeProvider>
         <QueryClientProvider client={client}>
-          <WishlistProvider>
-            <ProductDetail />
-          </WishlistProvider>
+          <CompareProvider>
+            <WishlistProvider>
+              <ProductDetail />
+            </WishlistProvider>
+          </CompareProvider>
         </QueryClientProvider>
       </ThemeProvider>
     );

@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { WishlistProvider } from "@/components/WishlistContext";
+import { CompareProvider } from "@/components/CompareContext";
 import Home from "@/pages/Home";
 import Products from "@/pages/Products";
 import ProductDetail from "@/pages/ProductDetail";
@@ -41,6 +42,7 @@ import PrivacyPolicy from "@/pages/PrivacyPolicy";
 import Returns from "@/pages/Returns";
 import Terms from "@/pages/Terms";
 import Wishlist from "@/pages/Wishlist";
+import Compare from "@/pages/Compare";
 import TrainingHome from "@/pages/training/Home";
 import TrainingPrograms from "@/pages/training/Programs";
 import TrainingCenters from "@/pages/training/Centers";
@@ -62,6 +64,7 @@ function Router() {
       <Route path="/stores/:id" component={Store} />
       <Route path="/stores" component={Stores} />
       <Route path="/wishlist" component={Wishlist} />
+      <Route path="/compare" component={Compare} />
       <Route path="/cart" component={Cart} />
       <Route path="/checkout" component={Checkout} />
       <Route path="/orders" component={Orders} />
@@ -139,14 +142,16 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <WishlistProvider>
-          <TooltipProvider>
-            <Toaster />
-            <ErrorBoundary>
-              <Router />
-            </ErrorBoundary>
-          </TooltipProvider>
-        </WishlistProvider>
+        <CompareProvider>
+          <WishlistProvider>
+            <TooltipProvider>
+              <Toaster />
+              <ErrorBoundary>
+                <Router />
+              </ErrorBoundary>
+            </TooltipProvider>
+          </WishlistProvider>
+        </CompareProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

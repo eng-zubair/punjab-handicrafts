@@ -3,7 +3,7 @@ import DiscountBadge from "@/components/DiscountBadge";
 import { Button } from "@/components/ui/button";
 import DistrictBadge from "./DistrictBadge";
 import GITag from "./GITag";
-import { ShoppingCart, Star, Eye } from "lucide-react";
+import { ShoppingCart, Star, Eye, ArrowLeftRight } from "lucide-react";
 import { useState } from "react";
 import { Link } from "wouter";
 import { addToCart } from "@/lib/cart";
@@ -13,6 +13,7 @@ import { normalizeImagePath } from "@/lib/utils/image";
 import WishlistButton from "@/components/WishlistButton";
 import QuickViewDialog from "@/components/QuickViewDialog";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useCompare } from "@/components/CompareContext";
 
 interface ProductCardProps {
   id: string;
@@ -56,6 +57,8 @@ export default function ProductCard({
   const [imageLoaded, setImageLoaded] = useState(false);
   const { toast } = useToast();
   const isMobile = useIsMobile();
+  const { isCompared, toggle, maxItems, count } = useCompare();
+  const compared = isCompared(id);
 
   const handleAddToCart = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -129,6 +132,21 @@ export default function ProductCard({
                   className="overlay-icon"
                 >
                   <Eye className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!compared && count >= maxItems) return;
+                    toggle(id);
+                  }}
+                  aria-label={compared ? "Remove from comparison" : "Add to comparison"}
+                  data-testid={`button-compare-${id}`}
+                  className={"overlay-icon " + (compared ? "bg-primary text-primary-foreground" : "")}
+                >
+                  <ArrowLeftRight className="w-4 h-4" />
                 </Button>
               </div>
             </div>

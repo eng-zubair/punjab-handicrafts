@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { ShoppingCart, User, Menu, Moon, Sun, Store, LayoutDashboard, LogOut, ShieldCheck, Award, Search, Heart } from "lucide-react";
+import { ShoppingCart, User, Menu, Moon, Sun, Store, LayoutDashboard, LogOut, ShieldCheck, Award, Search, Heart, ArrowLeftRight } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { toSlug } from "@/lib/utils";
@@ -28,6 +28,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { useWishlist } from "@/components/WishlistContext";
+import { useCompare } from "@/components/CompareContext";
 import { apiRequest } from "@/lib/queryClient";
 
 
@@ -40,6 +41,7 @@ export default function Header() {
   const { toast } = useToast();
   const [cartCount, setCartCount] = useState(0);
   const { items: wishlistItems, count: wishlistCount, replace: replaceWishlist } = useWishlist();
+  const { count: compareCount } = useCompare();
 
   const [, setLocation] = useLocation();
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
@@ -472,6 +474,22 @@ export default function Header() {
                     style={{ backgroundColor: '#e63946' }}
                   >
                     {cartCount > 9 ? '9+' : cartCount}
+                  </Badge>
+                )}
+              </Button>
+            </Link>
+            <Link href="/compare">
+              <Button variant="ghost" size="icon" className="relative" data-testid="button-compare" aria-label="Product comparison">
+                <ArrowLeftRight className="w-5 h-5" />
+                {compareCount > 0 && (
+                  <Badge
+                    variant="destructive"
+                    className="absolute -top-1.5 -right-0 z-[100] rounded-full min-w-[20px] h-[20px] flex items-center justify-center px-[5px] text-[11px] font-bold leading-none shadow-md border-2 border-background"
+                    data-testid="badge-compare-count"
+                    aria-label={`Products in comparison: ${compareCount}`}
+                    style={{ backgroundColor: '#2563eb' }}
+                  >
+                    {compareCount > 9 ? '9+' : compareCount}
                   </Badge>
                 )}
               </Button>

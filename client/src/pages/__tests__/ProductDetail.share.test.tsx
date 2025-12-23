@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ProductDetail from '@/pages/ProductDetail';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { WishlistProvider } from '@/components/WishlistContext';
+import { CompareProvider } from '@/components/CompareContext';
 import { apiRequest } from '@/lib/queryClient';
 
 vi.mock('wouter', async () => {
@@ -73,9 +74,11 @@ describe('ProductDetail share actions', () => {
     render(
       <ThemeProvider>
         <QueryClientProvider client={client}>
-          <WishlistProvider>
-            <ProductDetail />
-          </WishlistProvider>
+          <CompareProvider>
+            <WishlistProvider>
+              <ProductDetail />
+            </WishlistProvider>
+          </CompareProvider>
         </QueryClientProvider>
       </ThemeProvider>
     );
@@ -108,9 +111,11 @@ describe('ProductDetail share actions', () => {
     render(
       <ThemeProvider>
         <QueryClientProvider client={client}>
-          <WishlistProvider>
-            <ProductDetail />
-          </WishlistProvider>
+          <CompareProvider>
+            <WishlistProvider>
+              <ProductDetail />
+            </WishlistProvider>
+          </CompareProvider>
         </QueryClientProvider>
       </ThemeProvider>
     );
