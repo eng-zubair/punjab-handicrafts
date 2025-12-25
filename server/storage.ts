@@ -11,9 +11,6 @@ import {
   payouts,
   productGroups,
   productGroupMembers,
-  promotions,
-  promotionProducts,
-  promotionProductHistory,
   reviews,
   reviewMedia,
   reviewVotes,
@@ -53,10 +50,6 @@ import {
   type ProductGroup,
   type InsertProductGroupMember,
   type ProductGroupMember,
-  type InsertPromotion,
-  type Promotion,
-  type InsertPromotionProduct,
-  type PromotionProduct,
   type Review,
   type InsertReview,
   type InsertTrainingCenter,
@@ -146,19 +139,6 @@ export interface IStorage {
   addProductToGroup(groupId: string, productId: string, position?: number): Promise<ProductGroupMember>;
   removeProductFromGroup(groupId: string, productId: string): Promise<void>;
   getProductGroupMembers(groupId: string): Promise<ProductGroupMember[]>;
-
-  // Promotion operations
-  createPromotion(promotion: InsertPromotion): Promise<Promotion>;
-  getPromotion(id: string): Promise<Promotion | undefined>;
-  getPromotionsByStore(storeId: string): Promise<Promotion[]>;
-  updatePromotion(id: string, updates: Partial<InsertPromotion>): Promise<Promotion | undefined>;
-  deletePromotion(id: string): Promise<void>;
-  addProductToPromotion(promotionId: string, productId: string): Promise<PromotionProduct>;
-  removeProductFromPromotion(promotionId: string, productId: string): Promise<void>;
-  getPromotionProducts(promotionId: string): Promise<PromotionProduct[]>;
-  getPromotionProductsWithDetails(promotionId: string): Promise<(PromotionProduct & { product: Product })[]>;
-  getPromotionStatsForPromotions(promotionIds: string[]): Promise<Record<string, { productCount: number; lastAddedAt: string | null; lastRemovedAt: string | null }>>;
-  getPromotionProductsByStoreWithPromotions(storeId: string): Promise<(PromotionProduct & { promotion: Promotion })[]>;
 
   // Order operations
   createOrder(order: InsertOrder): Promise<Order>;
@@ -597,168 +577,7 @@ export class DatabaseStorage implements IStorage {
       .orderBy(asc(productGroupMembers.position));
   }
 
-  // Promotion operations
-  async createPromotion(promotion: InsertPromotion): Promise<Promotion> {
-    const [newPromotion] = await db.insert(promotions).values(promotion).returning();
-    return newPromotion;
-  }
-
-  async getPromotion(id: string): Promise<Promotion | undefined> {
-    const [promotion] = await db.select().from(promotions).where(eq(promotions.id, id));
-    return promotion;
-  }
-
-  async getPromotionsByStore(storeId: string): Promise<Promotion[]> {
-    return await db
-      .select()
-      .from(promotions)
-      .where(eq(promotions.storeId, storeId))
-      .orderBy(desc(promotions.createdAt));
-  }
-
-  async updatePromotion(id: string, updates: Partial<InsertPromotion>): Promise<Promotion | undefined> {
-    const [promotion] = await db
-      .update(promotions)
-      .set(updates)
-      .where(eq(promotions.id, id))
-      .returning();
-    return promotion;
-  }
-
-  async deletePromotion(id: string): Promise<void> {
-    await db.delete(promotions).where(eq(promotions.id, id));
-  }
-
-  async addProductToPromotion(promotionId: string, productId: string): Promise<PromotionProduct> {
-    const [promotionProduct] = await db
-      .insert(promotionProducts)
-      .values({ promotionId, productId })
-      .returning();
-    return promotionProduct;
-  }
-
-  async removeProductFromPromotion(promotionId: string, productId: string): Promise<void> {
-    await db
-      .delete(promotionProducts)
-      .where(and(
-        eq(promotionProducts.promotionId, promotionId),
-        eq(promotionProducts.productId, productId)
-      ));
-  }
-
-  async getPromotionProducts(promotionId: string): Promise<PromotionProduct[]> {
-    return await db
-      .select()
-      .from(promotionProducts)
-      .where(eq(promotionProducts.promotionId, promotionId));
-  }
-
-  async getPromotionProductsWithDetails(promotionId: string): Promise<(PromotionProduct & { product: Product })[]> {
-    const rows = await db
-      .select()
-      .from(promotionProducts)
-      .where(eq(promotionProducts.promotionId, promotionId));
-    const productIds = rows.map(r => r.productId);
-    const productsList = productIds.length ? await db.select().from(products).where(inArray(products.id, productIds)) : [];
-    const map = new Map(productsList.map(p => [p.id, p]));
-    return rows.map(r => ({ ...r, product: map.get(r.productId)! })).filter(r => r.product);
-  }
-
-  async getPromotionStatsForPromotions(promotionIds: string[]): Promise<Record<string, { productCount: number; lastAddedAt: string | null; lastRemovedAt: string | null }>> {
-    if (!promotionIds || promotionIds.length === 0) return {};
-
-    const countRows = await db
-      .select({
-        promotionId: promotionProducts.promotionId,
-        productCount: count(promotionProducts.id),
-        lastAddedAt: sql<string>`max(${promotionProducts.createdAt})`,
-      })
-      .from(promotionProducts)
-      .where(inArray(promotionProducts.promotionId, promotionIds))
-      .groupBy(promotionProducts.promotionId);
-
-    const removeRows = await db
-      .select({
-        promotionId: promotionProductHistory.promotionId,
-        lastRemovedAt: sql<string>`max(${promotionProductHistory.createdAt})`,
-      })
-      .from(promotionProductHistory)
-      .where(and(inArray(promotionProductHistory.promotionId, promotionIds), eq(promotionProductHistory.changeType, 'remove')))
-      .groupBy(promotionProductHistory.promotionId);
-
-    const removeMap = new Map(removeRows.map(r => [r.promotionId as string, (r.lastRemovedAt as any) ? String(r.lastRemovedAt) : null]));
-
-    const out: Record<string, { productCount: number; lastAddedAt: string | null; lastRemovedAt: string | null }> = {};
-    for (const r of countRows as any[]) {
-      const pid = String(r.promotionId);
-      out[pid] = {
-        productCount: Number(r.productCount) || 0,
-        lastAddedAt: r.lastAddedAt ? String(r.lastAddedAt) : null,
-        lastRemovedAt: removeMap.get(pid) || null,
-      };
-    }
-    for (const pid of promotionIds) {
-      if (!out[pid]) {
-        out[pid] = { productCount: 0, lastAddedAt: null, lastRemovedAt: removeMap.get(pid) || null };
-      }
-    }
-    return out;
-  }
-
-  async getPromotionProductsByStoreWithPromotions(storeId: string): Promise<(PromotionProduct & { promotion: Promotion })[]> {
-    const promos = await this.getPromotionsByStore(storeId);
-    const ids = promos.map(p => p.id);
-    if (ids.length === 0) return [];
-    const rows = await db
-      .select()
-      .from(promotionProducts)
-      .where(inArray(promotionProducts.promotionId, ids));
-    const map = new Map(promos.map(p => [p.id, p]));
-    return rows.map(r => ({ ...r, promotion: map.get(r.promotionId)! })).filter(r => r.promotion);
-  }
-
-  async addProductsToPromotionBulk(
-    promotionId: string,
-    items: { productId: string; overridePrice?: string | null; quantityLimit?: number; conditions?: any }[],
-  ): Promise<PromotionProduct[]> {
-    if (!items || items.length === 0) return [];
-    const insertValues = items.map(i => ({
-      promotionId,
-      productId: i.productId,
-      overridePrice: i.overridePrice ?? null,
-      quantityLimit: typeof i.quantityLimit === 'number' ? i.quantityLimit : 0,
-      conditions: i.conditions ?? null,
-    }));
-
-    return await db.transaction(async (tx) => {
-      const inserted = await tx
-        .insert(promotionProducts)
-        .values(insertValues)
-        .onConflictDoNothing()
-        .returning();
-
-      const historyValues = inserted.map(ip => ({
-        promotionId: ip.promotionId,
-        productId: ip.productId,
-        changeType: 'add',
-        changes: { overridePrice: ip.overridePrice, quantityLimit: ip.quantityLimit, conditions: ip.conditions },
-        changedBy: '',
-      }));
-
-      return inserted;
-    });
-  }
-
-  async removeProductsFromPromotionBulk(
-    promotionId: string,
-    productIds: string[],
-  ): Promise<void> {
-    if (!productIds || productIds.length === 0) return;
-    await db.transaction(async (tx) => {
-      await tx.delete(promotionProducts)
-        .where(and(eq(promotionProducts.promotionId, promotionId), inArray(promotionProducts.productId, productIds)));
-    });
-  }
+ 
 
   // Order operations
   async createOrder(order: InsertOrder): Promise<Order> {

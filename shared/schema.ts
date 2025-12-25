@@ -224,64 +224,6 @@ export const productGroupMembers = pgTable("product_group_members", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const promotions = pgTable("promotions", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  storeId: varchar("store_id").notNull().references(() => stores.id),
-  name: text("name").notNull(),
-  description: text("description"),
-  type: text("type").notNull(),
-  value: decimal("value", { precision: 10, scale: 2 }).notNull(),
-  minQuantity: integer("min_quantity").default(1),
-  appliesTo: text("applies_to").notNull(),
-  targetId: varchar("target_id"),
-  startAt: timestamp("start_at"),
-  endAt: timestamp("end_at"),
-  status: text("status").notNull().default("active"),
-  // New fields for Promotion Engine
-  priority: integer("priority").notNull().default(0),
-  usageLimit: integer("usage_limit"), // Global limit
-  usageLimitPerUser: integer("usage_limit_per_user"), // Per user limit
-  stackable: boolean("stackable").notNull().default(false), // Can be combined with other discounts
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const promotionProducts = pgTable("promotion_products", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  promotionId: varchar("promotion_id").notNull().references(() => promotions.id, { onDelete: 'cascade' }),
-  productId: varchar("product_id").notNull().references(() => products.id, { onDelete: 'cascade' }),
-  overridePrice: decimal("override_price", { precision: 10, scale: 2 }),
-  quantityLimit: integer("quantity_limit").notNull().default(0),
-  conditions: jsonb("conditions"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const promotionProductHistory = pgTable("promotion_product_history", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  promotionId: varchar("promotion_id").notNull().references(() => promotions.id, { onDelete: 'cascade' }),
-  productId: varchar("product_id").notNull().references(() => products.id, { onDelete: 'cascade' }),
-  changeType: text("change_type").notNull(),
-  changes: jsonb("changes"),
-  changedBy: varchar("changed_by").notNull().references(() => users.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const promotionRules = pgTable("promotion_rules", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  promotionId: varchar("promotion_id").notNull().references(() => promotions.id, { onDelete: 'cascade' }),
-  type: text("type").notNull(), // e.g., 'min_order_value', 'specific_product', 'customer_group', 'first_time_order'
-  operator: text("operator").notNull(), // e.g., 'eq', 'gt', 'lt', 'in', 'gte', 'lte'
-  value: jsonb("value").notNull(), // The threshold or target value
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const promotionActions = pgTable("promotion_actions", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  promotionId: varchar("promotion_id").notNull().references(() => promotions.id, { onDelete: 'cascade' }),
-  type: text("type").notNull(), // e.g., 'percentage_discount', 'fixed_amount', 'free_shipping', 'free_gift'
-  value: decimal("value", { precision: 10, scale: 2 }), // The discount amount or percentage
-  target: text("target").notNull().default("order_total"), // 'order_total', 'shipping', 'line_item', 'cheapest_item'
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
 
 export const reviews = pgTable("reviews", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -445,20 +387,6 @@ export const insertProductGroupMemberSchema = createInsertSchema(productGroupMem
   createdAt: true,
 });
 
-export const insertPromotionSchema = createInsertSchema(promotions).omit({
-  id: true,
-  createdAt: true,
-});
-
-export const insertPromotionProductSchema = createInsertSchema(promotionProducts).omit({
-  id: true,
-  createdAt: true,
-});
-
-export const insertPromotionProductHistorySchema = createInsertSchema(promotionProductHistory).omit({
-  id: true,
-  createdAt: true,
-});
 
 export const insertReviewSchema = createInsertSchema(reviews).omit({
   id: true,
@@ -527,30 +455,6 @@ export type ProductGroup = typeof productGroups.$inferSelect;
 export type InsertProductGroupMember = z.infer<typeof insertProductGroupMemberSchema>;
 export type ProductGroupMember = typeof productGroupMembers.$inferSelect;
 
-export type InsertPromotion = z.infer<typeof insertPromotionSchema>;
-export type Promotion = typeof promotions.$inferSelect;
-
-export type InsertPromotionProduct = z.infer<typeof insertPromotionProductSchema>;
-export type PromotionProduct = typeof promotionProducts.$inferSelect;
-
-
-
-export const insertPromotionRuleSchema = createInsertSchema(promotionRules).omit({
-  id: true,
-  createdAt: true,
-});
-export type InsertPromotionRule = z.infer<typeof insertPromotionRuleSchema>;
-export type PromotionRule = typeof promotionRules.$inferSelect;
-
-export const insertPromotionActionSchema = createInsertSchema(promotionActions).omit({
-  id: true,
-  createdAt: true,
-});
-export type InsertPromotionAction = z.infer<typeof insertPromotionActionSchema>;
-export type PromotionAction = typeof promotionActions.$inferSelect;
-
-export type InsertPromotionProductHistory = z.infer<typeof insertPromotionProductHistorySchema>;
-export type PromotionProductHistory = typeof promotionProductHistory.$inferSelect;
 
 export type InsertReview = z.infer<typeof insertReviewSchema>;
 export type Review = typeof reviews.$inferSelect;

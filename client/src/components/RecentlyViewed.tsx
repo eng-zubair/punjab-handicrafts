@@ -36,7 +36,6 @@ export default function RecentlyViewed() {
                   title={p.title}
                   description={""}
                   price={Number(p.price)}
-                  discountedPrice={p.discountedPrice != null ? Number(p.discountedPrice) : undefined}
                   image={p.image}
                   district={p.district}
                   giBrand={p.giBrand}

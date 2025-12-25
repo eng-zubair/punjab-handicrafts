@@ -95,7 +95,6 @@ export default function Wishlist() {
                   title={p.title}
                   description={p.description || ""}
                   price={Number(p.price)}
-                  discountedPrice={p.discountedPrice != null ? Number(p.discountedPrice) : undefined}
                   image={(p.images || [])[0] || ""}
                   district={p.district}
                   giBrand={p.giBrand}

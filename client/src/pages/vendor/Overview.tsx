@@ -3,7 +3,7 @@ import { VendorDashboard } from "./VendorDashboard";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { CheckCircle2, Circle, Store as StoreIcon, Package, ShoppingCart, DollarSign, AlertCircle, Clock, Tag, XCircle } from "lucide-react";
+import { CheckCircle2, Circle, Store as StoreIcon, Package, ShoppingCart, DollarSign, AlertCircle, Clock, XCircle } from "lucide-react";
 import { Link } from "wouter";
 import { formatPrice } from "@/lib/utils/price";
 
@@ -292,25 +292,6 @@ export default function VendorOverview() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">In Promotions</CardTitle>
-              <Tag className="w-4 h-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold" data-testid="metric-promo-active-products">
-                {analytics?.promotionActiveProductCount || 0}
-              </div>
-              <div className="flex items-center gap-2 mt-1">
-                <Badge variant="outline">% {analytics?.promotionTypeBreakdown?.percentage || 0}</Badge>
-                <Badge variant="outline">PKR {analytics?.promotionTypeBreakdown?.fixed || 0}</Badge>
-                <Badge variant="outline">BOGO {analytics?.promotionTypeBreakdown?.['buy-one-get-one'] || 0}</Badge>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Total associations: {analytics?.promotionProductCount || 0}
-              </p>
-            </CardContent>
-          </Card>
         </div>
 
         <Card>

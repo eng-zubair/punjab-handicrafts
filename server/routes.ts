@@ -3,7 +3,7 @@ import express from "express";
 import { createServer, type Server } from "http";
 import passport from "passport";
 import { storage } from "./storage";
-import { reviews, users, promotionProductHistory, promotionProducts, promotions, promotionRules, promotionActions, taxRules, shippingRateRules, platformSettings, configAudits, productVariants, sanatzarCenters, trainingPrograms, trainingApplications, registeredArtisans, surveyQuestions, categories, artisanWork, products, newsletterSubscriptions, newsletterSignupSchema } from "@shared/schema";
+import { reviews, users, taxRules, shippingRateRules, platformSettings, configAudits, productVariants, sanatzarCenters, trainingPrograms, trainingApplications, registeredArtisans, surveyQuestions, categories, artisanWork, products, newsletterSubscriptions, newsletterSignupSchema } from "@shared/schema";
 import { db, pool } from "./db";
 import { sql, and, eq, inArray, desc, or } from "drizzle-orm";
 import { setupAuth, isAuthenticated, hashPassword } from "./auth";
@@ -22,9 +22,6 @@ import {
   insertMessageSchema,
   insertPayoutSchema,
   insertProductGroupSchema,
-  insertPromotionSchema,
-  insertPromotionRuleSchema,
-  insertPromotionActionSchema,
   insertTrainingCenterSchema,
   insertTrainingProgramSchema,
   insertTraineeApplicationSchema,
@@ -34,7 +31,6 @@ import {
   loginSchema,
   type User,
 } from "@shared/schema";
-import { promotionEngine } from "./services/promotion";
 
 // Helper function to remove sensitive fields from user objects
 function sanitizeUser(user: User) {
@@ -2038,526 +2034,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Promotion Management Routes
-  app.get('/api/vendor/promotions', isAuthenticated, isVendor, async (req: any, res) => {
-    try {
-      const stores = await storage.getStoresByVendor(req.userId);
-      const allPromotions = await Promise.all(
-        stores.map(store => storage.getPromotionsByStore(store.id))
-      );
-      const promotions = allPromotions.flat();
-      const ids = promotions.map(p => p.id);
-      let stats: Record<string, { productCount: number; lastAddedAt: string | null; lastRemovedAt: string | null }> = {};
-      try {
-        stats = await storage.getPromotionStatsForPromotions(ids);
-      } catch (e) {
-        const counts = await Promise.all(ids.map(async (id) => {
-          const items = await storage.getPromotionProducts(id);
-          return { id, count: items.length };
-        }));
-        stats = Object.fromEntries(counts.map(c => [c.id, { productCount: c.count, lastAddedAt: null, lastRemovedAt: null }]));
-      }
-      const enriched = promotions.map(p => ({
-        ...p,
-        productCount: stats[p.id]?.productCount ?? 0,
-        lastAddedAt: stats[p.id]?.lastAddedAt ?? null,
-        lastRemovedAt: stats[p.id]?.lastRemovedAt ?? null,
-      }));
-      res.json(enriched);
-    } catch (error) {
-      console.error("Error fetching promotions:", error);
-      res.status(500).json({ message: "Failed to fetch promotions" });
-    }
-  });
-
-  app.post('/api/vendor/promotions', isAuthenticated, isVendor, async (req: any, res) => {
-    try {
-      const stores = await storage.getStoresByVendor(req.userId);
-      if (stores.length === 0) {
-        return res.status(400).json({ message: "Vendor must have a store to create promotions" });
-      }
-
-      const dataToValidate = {
-        ...req.body,
-        storeId: req.body.storeId || stores[0].id,
-        startAt: req.body.startAt ? new Date(req.body.startAt) : undefined,
-        endAt: req.body.endAt ? new Date(req.body.endAt) : undefined,
-      };
-
-      const validatedData = insertPromotionSchema.parse(dataToValidate);
-
-      const store = await storage.getStore(validatedData.storeId);
-      if (!store || store.vendorId !== req.userId) {
-        return res.status(403).json({ message: "Not authorized to create promotions for this store" });
-      }
-
-      if (validatedData.targetId) {
-        if (validatedData.appliesTo === 'product') {
-          const product = await storage.getProduct(validatedData.targetId);
-          if (!product || product.storeId !== validatedData.storeId) {
-            return res.status(400).json({ message: "Product not found or doesn't belong to your store" });
-          }
-        } else if (validatedData.appliesTo === 'group') {
-          const group = await storage.getProductGroup(validatedData.targetId);
-          if (!group || group.storeId !== validatedData.storeId) {
-            return res.status(400).json({ message: "Product group not found or doesn't belong to your store" });
-          }
-        }
-      }
-
-      const promotion = await storage.createPromotion(validatedData);
-      res.status(201).json(promotion);
-    } catch (error: any) {
-      console.error("Error creating promotion:", error);
-      if (error.name === 'ZodError') {
-        return res.status(400).json({ message: "Invalid promotion data", errors: error.errors });
-      }
-      res.status(500).json({ message: "Failed to create promotion" });
-    }
-  });
-
-  app.patch('/api/vendor/promotions/:id', isAuthenticated, isVendor, async (req: any, res) => {
-    try {
-      const promotionId = req.params.id;
-      const existingPromotion = await storage.getPromotion(promotionId);
-
-      if (!existingPromotion) {
-        return res.status(404).json({ message: "Promotion not found" });
-      }
-
-      const store = await storage.getStore(existingPromotion.storeId);
-      if (!store || store.vendorId !== req.userId) {
-        return res.status(403).json({ message: "Not authorized to edit this promotion" });
-      }
-
-      const validatedData = insertPromotionSchema.partial().parse(req.body);
-
-      if (validatedData.targetId !== undefined && validatedData.targetId !== null) {
-        const appliesTo = validatedData.appliesTo || existingPromotion.appliesTo;
-        if (appliesTo === 'product') {
-          const product = await storage.getProduct(validatedData.targetId);
-          if (!product || product.storeId !== existingPromotion.storeId) {
-            return res.status(400).json({ message: "Product not found or doesn't belong to your store" });
-          }
-        } else if (appliesTo === 'group') {
-          const group = await storage.getProductGroup(validatedData.targetId);
-          if (!group || group.storeId !== existingPromotion.storeId) {
-            return res.status(400).json({ message: "Product group not found or doesn't belong to your store" });
-          }
-        }
-      }
-
-      const updatedPromotion = await storage.updatePromotion(promotionId, validatedData);
-      res.json(updatedPromotion);
-    } catch (error: any) {
-      console.error("Error updating promotion:", error);
-      if (error.name === 'ZodError') {
-        return res.status(400).json({ message: "Invalid promotion data", errors: error.errors });
-      }
-      res.status(500).json({ message: "Failed to update promotion" });
-    }
-  });
-
-  app.delete('/api/vendor/promotions/:id', isAuthenticated, isVendor, async (req: any, res) => {
-    try {
-      const promotionId = req.params.id;
-      const existingPromotion = await storage.getPromotion(promotionId);
-
-      if (!existingPromotion) {
-        return res.status(404).json({ message: "Promotion not found" });
-      }
-
-      const store = await storage.getStore(existingPromotion.storeId);
-      if (!store || store.vendorId !== req.userId) {
-        return res.status(403).json({ message: "Not authorized to delete this promotion" });
-      }
-
-      await storage.deletePromotion(promotionId);
-      res.status(204).send();
-    } catch (error) {
-      console.error("Error deleting promotion:", error);
-      res.status(500).json({ message: "Failed to delete promotion" });
-    }
-  });
-
-  const bulkPromotionProductsSchema = z.object({
-    items: z.array(z.object({
-      productId: z.string(),
-      overridePrice: z.string().optional(),
-      quantityLimit: z.number().int().min(0).optional(),
-      conditions: z.any().optional(),
-    })).min(1),
-  });
-
-  app.get('/api/vendor/promotions/:id/products', isAuthenticated, isVendor, async (req: any, res) => {
-    try {
-      const promotionId = req.params.id;
-      const promotion = await storage.getPromotion(promotionId);
-      if (!promotion) return res.status(404).json({ message: 'Promotion not found' });
-      const store = await storage.getStore(promotion.storeId);
-      if (!store || store.vendorId !== req.userId) {
-        return res.status(403).json({ message: 'Not authorized to view this promotion' });
-      }
-      const list = await storage.getPromotionProductsWithDetails(promotionId);
-      const now = Date.now();
-      const enriched = list.map(item => {
-        const startOk = !promotion.startAt || new Date(promotion.startAt).getTime() <= now;
-        const endOk = !promotion.endAt || new Date(promotion.endAt).getTime() >= now;
-        const isActive = promotion.status === 'active' && startOk && endOk;
-        return { ...item, isActive };
-      });
-      res.json(enriched);
-    } catch (error) {
-      console.error('Error fetching promotion products:', error);
-      res.status(500).json({ message: 'Failed to fetch promotion products' });
-    }
-  });
-
-  app.get('/api/vendor/promotion-products', isAuthenticated, isVendor, async (req: any, res) => {
-    try {
-      const stores = await storage.getStoresByVendor(req.userId);
-      const all = await Promise.all(stores.map(s => storage.getPromotionProductsByStoreWithPromotions(s.id)));
-      const flat = all.flat();
-      const now = Date.now();
-      const enriched = flat.map(item => {
-        const p = item.promotion;
-        const startOk = !p.startAt || new Date(p.startAt).getTime() <= now;
-        const endOk = !p.endAt || new Date(p.endAt).getTime() >= now;
-        const isActive = p.status === 'active' && startOk && endOk;
-        return { ...item, isActive };
-      });
-      res.json(enriched);
-    } catch (error) {
-      console.error('Error fetching promotion-products:', error);
-      res.status(500).json({ message: 'Failed to fetch promotion-products' });
-    }
-  });
-
-  app.get('/api/promotions/active-by-products', async (req: any, res) => {
-    try {
-      const idsParam = (req.query.ids as string) || '';
-      const ids = idsParam.split(',').map(s => s.trim()).filter(Boolean);
-      if (ids.length === 0) {
-        return res.json([]);
-      }
-      // 1) Gather promotions explicitly attached to products
-      const rows = await db
-        .select()
-        .from(promotionProducts)
-        .where(inArray(promotionProducts.productId, ids));
-      const attachedPromoIds = Array.from(new Set(rows.map(r => r.promotionId))).filter(Boolean);
-      const attachedPromos = attachedPromoIds.length
-        ? await db.select().from(promotions).where(inArray(promotions.id, attachedPromoIds))
-        : [];
-      const attachedMap = new Map(attachedPromos.map(p => [p.id, p]));
-
-      // 2) Gather store-wide promotions (appliesTo = 'order' | 'all') for the stores of the given products
-      const productsForStores = await db
-        .select({ id: products.id, storeId: products.storeId })
-        .from(products)
-        .where(inArray(products.id, ids));
-      const productToStore = new Map(productsForStores.map(r => [r.id, r.storeId]));
-      const uniqueStoreIds = Array.from(new Set(productsForStores.map(r => r.storeId))).filter(Boolean);
-      const storeWidePromos = uniqueStoreIds.length
-        ? await db
-            .select()
-            .from(promotions)
-            .where(and(inArray(promotions.storeId, uniqueStoreIds), inArray(promotions.appliesTo, ['order', 'all'] as any)))
-        : [];
-
-      const now = Date.now();
-      // Build candidate promotions per productId, then choose top by priority (attached preferred on tie)
-      const candidatesByProduct = new Map<string, Array<{ promotionId: string; type: string; value: string; endAt: string | null; priority: number; source: 'attached' | 'store' }>>();
-
-      for (const r of rows) {
-        const p = attachedMap.get(r.promotionId);
-        if (!p) continue;
-        const startOk = !p.startAt || new Date(p.startAt).getTime() <= now;
-        const endOk = !p.endAt || new Date(p.endAt).getTime() >= now;
-        const isActive = p.status === 'active' && startOk && endOk;
-        if (!isActive) continue;
-        const list = candidatesByProduct.get(r.productId) || [];
-        list.push({
-          promotionId: r.promotionId,
-          type: p.type as any,
-          value: String(p.value),
-          endAt: p.endAt ? String(p.endAt) : null,
-          priority: Number(p.priority ?? 0),
-          source: 'attached',
-        });
-        candidatesByProduct.set(r.productId, list);
-      }
-
-      for (const pid of ids) {
-        const storeId = productToStore.get(pid);
-        if (!storeId) continue;
-        for (const promo of storeWidePromos) {
-          if (promo.storeId !== storeId) continue;
-          const startOk = !promo.startAt || new Date(promo.startAt).getTime() <= now;
-          const endOk = !promo.endAt || new Date(promo.endAt).getTime() >= now;
-          const isActive = promo.status === 'active' && startOk && endOk;
-          if (!isActive) continue;
-          const list = candidatesByProduct.get(pid) || [];
-          list.push({
-            promotionId: promo.id,
-            type: promo.type as any,
-            value: String(promo.value),
-            endAt: promo.endAt ? String(promo.endAt) : null,
-            priority: Number(promo.priority ?? 0),
-            source: 'store',
-          });
-          candidatesByProduct.set(pid, list);
-        }
-      }
-
-      // Pick one per product: highest priority; prefer attached over store-wide on tie
-      const out: Array<{ productId: string; promotionId: string; type: string; value: string; endAt: string | null }> = [];
-      for (const pid of ids) {
-        const candidates = candidatesByProduct.get(pid) || [];
-        if (candidates.length === 0) continue;
-        candidates.sort((a, b) => {
-          if (b.priority !== a.priority) return b.priority - a.priority;
-          // attached preferred to store-wide on tie
-          if (a.source !== b.source) return a.source === 'attached' ? -1 : 1;
-          return 0;
-        });
-        const top = candidates[0];
-        out.push({
-          productId: pid,
-          promotionId: top.promotionId,
-          type: top.type,
-          value: top.value,
-          endAt: top.endAt,
-        });
-      }
-
-      res.json(out);
-    } catch (error) {
-      console.error('Error fetching active promotions by products:', error);
-      res.status(500).json({ message: 'Failed to fetch promotions' });
-    }
-  });
-
-  app.get('/api/promotions/active-by-variants', async (req: any, res) => {
-    try {
-      const skusParam = (req.query.skus as string) || '';
-      const skus = skusParam.split(',').map(s => s.trim()).filter(Boolean);
-      if (skus.length === 0) {
-        return res.json([]);
-      }
-      const promos = await db
-        .select()
-        .from(promotions)
-        .where(and(eq(promotions.appliesTo, 'variant'), inArray(promotions.targetId, skus)));
-      const now = Date.now();
-      const out = promos
-        .map((p: any) => {
-          const startOk = !p.startAt || new Date(p.startAt).getTime() <= now;
-          const endOk = !p.endAt || new Date(p.endAt).getTime() >= now;
-          const isActive = p.status === 'active' && startOk && endOk;
-          return { targetId: p.targetId, type: p.type, value: String(p.value), endAt: p.endAt ? String(p.endAt) : null, isActive };
-        })
-        .filter((x: any) => x.isActive);
-      res.json(out);
-    } catch (error) {
-      console.error('Error fetching active promotions by variants:', error);
-      res.status(500).json({ message: 'Failed to fetch promotions' });
-    }
-  });
-
-  app.post('/api/vendor/promotions/:id/products/bulk', isAuthenticated, isVendor, async (req: any, res) => {
-    try {
-      const promotionId = req.params.id;
-      const promotion = await storage.getPromotion(promotionId);
-      if (!promotion) return res.status(404).json({ message: 'Promotion not found' });
-      const store = await storage.getStore(promotion.storeId);
-      if (!store || store.vendorId !== req.userId) {
-        return res.status(403).json({ message: 'Not authorized to modify this promotion' });
-      }
-
-      const { items } = bulkPromotionProductsSchema.parse(req.body);
-
-      const productIds = items.map(i => i.productId);
-      const productsList = await Promise.all(productIds.map(id => storage.getProduct(id)));
-      const invalid: string[] = [];
-      const productMap = new Map((productsList || []).filter(Boolean).map((p: any) => [p.id, p]));
-      const eligibleItems = items.filter((i) => {
-        const p = productMap.get(i.productId) as any;
-        if (!p) {
-          console.log(`Product ${i.productId} not found`);
-          invalid.push(i.productId);
-          return false;
-        }
-        if (p.storeId !== store.id) {
-          console.log(`Product ${i.productId} doesn't belong to store ${store.id}, belongs to ${p.storeId}`);
-          invalid.push(i.productId);
-          return false;
-        }
-        if (p.status !== 'approved') {
-          console.log(`Product ${i.productId} (${p.title}) status is '${p.status}', not 'approved'`);
-          invalid.push(i.productId);
-          return false;
-        }
-        if (p.stock <= 0) {
-          console.log(`Product ${i.productId} has no stock`);
-          invalid.push(i.productId);
-          return false;
-        }
-        if (typeof i.quantityLimit === 'number' && i.quantityLimit > p.stock) {
-          console.log(`Product ${i.productId} quantity limit exceeds stock`);
-          invalid.push(i.productId);
-          return false;
-        }
-        console.log(`Product ${i.productId} (${p.title}) is eligible`);
-        return true;
-      });
-
-      console.log(`Eligible products: ${eligibleItems.length}, Invalid: ${invalid.length}`);
-
-      if (eligibleItems.length === 0) {
-        console.error('No eligible products:', { invalidIds: invalid, reason: 'All products failed validation' });
-        return res.status(400).json({ message: 'No eligible products to add', invalid });
-      }
-
-      const effectiveItems = eligibleItems.map((i) => {
-        const p = productMap.get(i.productId) as any;
-        let overridePrice = i.overridePrice;
-        if (!overridePrice && promotion.type === 'percentage' && p?.price != null) {
-          const priceNum = parseFloat(String(p.price));
-          const pct = parseFloat(String(promotion.value));
-          const discounted = Math.max(0, priceNum * (100 - pct) / 100);
-          overridePrice = discounted.toFixed(2);
-        }
-        return { ...i, overridePrice };
-      });
-
-      const inserted = await storage.addProductsToPromotionBulk(promotionId, effectiveItems);
-
-      for (const ins of inserted) {
-        try {
-          await db.insert(promotionProductHistory).values({
-            promotionId: ins.promotionId,
-            productId: ins.productId,
-            changeType: 'add',
-            changes: { overridePrice: ins.overridePrice, quantityLimit: ins.quantityLimit, conditions: ins.conditions },
-            changedBy: req.userId,
-          });
-        } catch { }
-      }
-
-      res.status(201).json({ added: inserted.length, invalid });
-    } catch (error: any) {
-      console.error('Error adding products to promotion:', error);
-      if (error.name === 'ZodError') {
-        return res.status(400).json({ message: 'Invalid payload', errors: error.errors });
-      }
-      res.status(500).json({ message: 'Failed to add products to promotion' });
-    }
-  });
-
-  app.post('/api/vendor/promotions/:id/products/remove', isAuthenticated, isVendor, async (req: any, res) => {
-    try {
-      const promotionId = req.params.id;
-      const promotion = await storage.getPromotion(promotionId);
-      if (!promotion) return res.status(404).json({ message: 'Promotion not found' });
-      const store = await storage.getStore(promotion.storeId);
-      if (!store || store.vendorId !== req.userId) {
-        return res.status(403).json({ message: 'Not authorized to modify this promotion' });
-      }
-
-      const ids = (req.body?.productIds as string[]) || [];
-      if (!Array.isArray(ids) || ids.length === 0) {
-        return res.status(400).json({ message: 'productIds array required' });
-      }
-
-      await storage.removeProductsFromPromotionBulk(promotionId, ids);
-
-      for (const pid of ids) {
-        try {
-          await db.insert(promotionProductHistory).values({
-            promotionId,
-            productId: pid,
-            changeType: 'remove',
-            changedBy: req.userId,
-          });
-        } catch { }
-      }
-
-      res.json({ removed: ids.length });
-    } catch (error) {
-      console.error('Error removing promotion products:', error);
-      res.status(500).json({ message: 'Failed to remove promotion products' });
-    }
-  });
-
-  // Rules & Actions Management
-  app.get('/api/vendor/promotions/:id/rules', isAuthenticated, isVendor, async (req: any, res) => {
-    try {
-      const rules = await db.select().from(promotionRules).where(eq(promotionRules.promotionId, req.params.id));
-      res.json(rules);
-    } catch (e) {
-      res.status(500).json({ message: 'Failed to fetch rules' });
-    }
-  });
-
-  app.post('/api/vendor/promotions/:id/rules', isAuthenticated, isVendor, async (req: any, res) => {
-    try {
-      const promotionId = req.params.id;
-      // Basic auth check: verify promotion belongs to vendor
-      const promo = await storage.getPromotion(promotionId);
-      if (!promo) return res.status(404).json({ message: 'Promotion not found' });
-      // TODO: Add stricter vendor ownership check if needed (promo.storeId -> vendorId)
-
-      const ruleData = insertPromotionRuleSchema.parse({ ...req.body, promotionId });
-      const [created] = await db.insert(promotionRules).values(ruleData).returning();
-      res.status(201).json(created);
-    } catch (error: any) {
-      if (error.name === 'ZodError') return res.status(400).json({ message: 'Invalid rule data', errors: error.errors });
-      res.status(500).json({ message: 'Failed to create rule' });
-    }
-  });
-
-  app.delete('/api/vendor/promotions/rules/:id', isAuthenticated, isVendor, async (req: any, res) => {
-    try {
-      await db.delete(promotionRules).where(eq(promotionRules.id, req.params.id));
-      res.json({ success: true });
-    } catch (e) {
-      res.status(500).json({ message: 'Failed to delete rule' });
-    }
-  });
-
-  app.get('/api/vendor/promotions/:id/actions', isAuthenticated, isVendor, async (req: any, res) => {
-    try {
-      const actions = await db.select().from(promotionActions).where(eq(promotionActions.promotionId, req.params.id));
-      res.json(actions);
-    } catch (e) {
-      res.status(500).json({ message: 'Failed to fetch actions' });
-    }
-  });
-
-  app.post('/api/vendor/promotions/:id/actions', isAuthenticated, isVendor, async (req: any, res) => {
-    try {
-      const promotionId = req.params.id;
-      const promo = await storage.getPromotion(promotionId);
-      if (!promo) return res.status(404).json({ message: 'Promotion not found' });
-
-      const actionData = insertPromotionActionSchema.parse({ ...req.body, promotionId });
-      const [created] = await db.insert(promotionActions).values(actionData).returning();
-      res.status(201).json(created);
-    } catch (error: any) {
-      if (error.name === 'ZodError') return res.status(400).json({ message: 'Invalid action data', errors: error.errors });
-      res.status(500).json({ message: 'Failed to create action' });
-    }
-  });
-
-  app.delete('/api/vendor/promotions/actions/:id', isAuthenticated, isVendor, async (req: any, res) => {
-    try {
-      await db.delete(promotionActions).where(eq(promotionActions.id, req.params.id));
-      res.json({ success: true });
-    } catch (e) {
-      res.status(500).json({ message: 'Failed to delete action' });
-    }
-  });
 
   // Order Management Routes
   app.post('/api/checkout/calculate', async (req: any, res) => {
@@ -2607,21 +2083,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Calculate base subtotal
       const subtotal = normalized.reduce((s, it) => s + (it.price * it.quantity), 0);
 
-      // Apply Promotions
-      const promoContext = {
-        items: normalized.map(i => ({
-          productId: i.productId,
-          quantity: i.quantity,
-          price: i.price,
-          categoryId: i.productCategory,
-        })),
-        total: subtotal,
-        userId: userId !== 'anonymous' ? userId : undefined,
-      };
-
-      const promoResult = await promotionEngine.applyPromotions(promoContext);
-      const discountedSubtotal = promoResult.finalTotal;
-      const totalDiscount = promoResult.totalDiscount;
+      const discountedSubtotal = subtotal;
+      const totalDiscount = 0;
 
       // Compute Tax (Note: Currently taxing original amount, should ideally tax discounted)
       const province = shippingProvince || detectProvince(shippingAddress || [shippingStreet, shippingCity, shippingProvince, shippingPostalCode, shippingCountry].filter(Boolean).join(', '));
@@ -2630,19 +2093,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Compute Shipping
       let shipRes = await computeShipping(normalized.map(n => ({ ...n, price: String(n.price) })), province, shippingMethod);
 
-      // Check for Free Shipping Action
-      const freeShippingApplied = promoResult.applied.some(a => a.freeShipping);
-      if (freeShippingApplied) {
-        shipRes.amount = 0;
-        shipRes.breakdown = [];
-      }
-
       const total = discountedSubtotal + taxRes.amount + shipRes.amount;
 
       res.json({
         subtotal: subtotal.toFixed(2),
         discount: totalDiscount.toFixed(2),
-        discountDetails: promoResult.applied,
+        discountDetails: [],
         taxes: taxRes.amount.toFixed(2),
         shipping: shipRes.amount.toFixed(2),
         total: total.toFixed(2),
@@ -2694,50 +2150,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const productsList = await Promise.all(productIds.map((id) => storage.getProduct(id)));
       const productMap = new Map((productsList || []).filter(Boolean).map((p: any) => [p.id, p]));
 
-      // Determine active promotions for the products in this order and compute best effective prices
-      const promoRows = productIds.length
-        ? await db.select().from(promotionProducts).where(inArray(promotionProducts.productId, productIds))
-        : [];
-      const promoIds = Array.from(new Set(promoRows.map((r: any) => r.promotionId))).filter(Boolean);
-      const promos = promoIds.length
-        ? await db.select().from(promotions).where(inArray(promotions.id, promoIds))
-        : [];
-      const promoById = new Map(promos.map((p: any) => [p.id, p]));
-      const now = Date.now();
-      const activeByProduct: Record<string, Array<{ type: string; value: string; overridePrice: string | null; minQuantity: number }>> = {};
-      for (const r of promoRows as any[]) {
-        const p = promoById.get(r.promotionId);
-        if (!p) continue;
-        const startOk = !p.startAt || new Date(p.startAt as any).getTime() <= now;
-        const endOk = !p.endAt || new Date(p.endAt as any).getTime() >= now;
-        const isActive = String(p.status) === 'active' && startOk && endOk;
-        if (!isActive) continue;
-        const arr = activeByProduct[r.productId] || [];
-        arr.push({ type: String(p.type), value: String(p.value), overridePrice: r.overridePrice ? String(r.overridePrice) : null, minQuantity: Number(p.minQuantity || 1) });
-        activeByProduct[r.productId] = arr;
-      }
-
-      // Variant-targeted promotions by SKU
-      const variantSkus = items.map((i: any) => i.variantSku).filter(Boolean) as string[];
-      const activeByVariantSku: Record<string, Array<{ type: string; value: string; minQuantity: number }>> = {};
-      if (variantSkus.length > 0) {
-        try {
-          const vPromos = await db
-            .select()
-            .from(promotions)
-            .where(and(eq(promotions.appliesTo, 'variant'), inArray(promotions.targetId, Array.from(new Set(variantSkus)))));
-          for (const p of vPromos as any[]) {
-            const startOk = !p.startAt || new Date(p.startAt as any).getTime() <= now;
-            const endOk = !p.endAt || new Date(p.endAt as any).getTime() >= now;
-            const isActive = String(p.status) === 'active' && startOk && endOk;
-            if (!isActive) continue;
-            const arr = activeByVariantSku[String(p.targetId)] || [];
-            arr.push({ type: String(p.type), value: String(p.value), minQuantity: Number(p.minQuantity || 1) });
-            activeByVariantSku[String(p.targetId)] = arr;
-          }
-        } catch { }
-      }
-
       log(`Order create start: user=${userId} items=${items.length}`);
 
       const taxItems: Array<TaxItem> = [];
@@ -2769,41 +2181,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         const base = variantRow ? parseFloat(String(variantRow.price)) : parseFloat(String(product.price));
-        let effectivePrice = base;
-        const applicablePromos = [
-          ...(activeByProduct[item.productId] || []).filter(p => item.quantity >= p.minQuantity),
-          ...((item.variantSku ? (activeByVariantSku[String(item.variantSku)] || []) : [])
-            .filter(p => item.quantity >= p.minQuantity)
-            .map((p) => ({ ...p, overridePrice: null })))
-        ];
-        const candidates: number[] = [base];
-        for (const ap of applicablePromos) {
-          if ((ap as any).overridePrice != null) {
-            const v = parseFloat(String((ap as any).overridePrice));
-            if (!Number.isNaN(v)) candidates.push(Math.max(0, v));
-            continue;
-          }
-          const valNum = parseFloat(ap.value);
-          if (ap.type === 'percentage' && !Number.isNaN(valNum)) {
-            candidates.push(Math.max(0, base * (100 - valNum) / 100));
-          } else if (ap.type === 'fixed' && !Number.isNaN(valNum)) {
-            candidates.push(Math.max(0, base - valNum));
-          } else if ((ap.type === 'override' || ap.type === 'fixed_override') && !Number.isNaN(valNum)) {
-            candidates.push(Math.max(0, valNum));
-          } else if (ap.type === 'buy-one-get-one') {
-            const qty = item.quantity;
-            if (qty >= 2) {
-              const pairs = Math.floor(qty / 2);
-              const paidUnits = pairs + (qty % 2);
-              const totalForLine = base * paidUnits;
-              const effectivePerUnit = totalForLine / qty;
-              candidates.push(Math.max(0, effectivePerUnit));
-            }
-          }
-        }
-        effectivePrice = Number(Math.min(...candidates).toFixed(2));
-        const discountedApplied = effectivePrice < base;
-        log(`Item pricing: product=${item.productId} qty=${item.quantity} base=${base} effective=${effectivePrice} discounted=${discountedApplied}`);
+        const effectivePrice = Number(base.toFixed(2));
+        log(`Item pricing: product=${item.productId} qty=${item.quantity} base=${base} effective=${effectivePrice}`);
 
         totalComputed += effectivePrice * item.quantity;
         validatedItems.push({
@@ -3558,30 +2937,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       const totalProducts = products.flat().length;
 
-      const allPromoProducts = await Promise.all(storeIds.map(id => storage.getPromotionProductsByStoreWithPromotions(id)));
-      const promoProductsFlat = allPromoProducts.flat();
-      const now = Date.now();
-      const activePromoProducts = promoProductsFlat.filter(pp => {
-        const p = pp.promotion;
-        const startOk = !p.startAt || new Date(p.startAt).getTime() <= now;
-        const endOk = !p.endAt || new Date(p.endAt).getTime() >= now;
-        return p.status === 'active' && startOk && endOk;
-      });
-      const typeBreakdown = {
-        percentage: activePromoProducts.filter(x => x.promotion.type === 'percentage').length,
-        fixed: activePromoProducts.filter(x => x.promotion.type === 'fixed').length,
-        'buy-one-get-one': activePromoProducts.filter(x => x.promotion.type === 'buy-one-get-one').length,
-      };
-
       res.json({
         totalRevenue: totalRevenue.toFixed(2), // Serialize as string with 2 decimal places
         totalEarnings: totalEarnings.toFixed(2), // Serialize as string with 2 decimal places
         totalOrders,
         totalProducts,
         totalStores: stores.length,
-        promotionProductCount: promoProductsFlat.length,
-        promotionActiveProductCount: activePromoProducts.length,
-        promotionTypeBreakdown: typeBreakdown,
       });
     } catch (error) {
       console.error("Error fetching vendor analytics:", error);
@@ -3690,8 +3051,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .filter((it: any) => String(it.storeId) === String(storeId))
         .reduce((sum: number, it: any) => sum + (Number(it.price || 0) * Number(it.quantity || 1)), 0);
       const revenue = revenueNum.toFixed(2);
-      const discounts = (await storage.getPromotionsByStore(storeId)).length;
-      res.json({ receivedOrders, fulfilledOrders, canceledOrders, revenue, discounts });
+      res.json({ receivedOrders, fulfilledOrders, canceledOrders, revenue });
     } catch (error) {
       console.error('Error fetching store activities:', error);
       res.status(500).json({ message: 'Failed to fetch store activities' });

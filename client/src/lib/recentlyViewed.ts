@@ -2,7 +2,6 @@ export type RecentlyViewedItem = {
   id: string
   title: string
   price: number
-  discountedPrice?: number
   image: string
   district: string
   giBrand: string

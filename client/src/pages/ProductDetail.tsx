@@ -22,7 +22,6 @@ import { addToCart } from "@/lib/cart";
 import { useToast } from "@/hooks/use-toast";
 import { formatPrice, toSafeNumber } from "@/lib/utils/price";
 import { normalizeImagePaths } from "@/lib/utils/image";
-import DiscountBadge from "@/components/DiscountBadge";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -102,10 +101,7 @@ export default function ProductDetail() {
     setSelectedImage(0);
   }, [selectedVariant]);
 
-  const { data: activePromotions = [] } = useQuery<Array<{ productId: string; promotionId: string; type: string; value: string; endAt: string | null }>>({
-    queryKey: [`/api/promotions/active-by-products`, { ids: id }],
-    enabled: !!id,
-  });
+ 
 
   const { data: store, isLoading: storeLoading, isError: storeError } = useQuery<Store>({
     queryKey: [`/api/stores/${product?.storeId}`],
@@ -147,23 +143,7 @@ export default function ProductDetail() {
     return { total, items };
   }, [reviewData]);
 
-  // Compute variant SKUs from product variants for promo fetching
-  const variantSkus = useMemo(() => {
-    try {
-      const vs = product?.variants
-        ? (typeof product.variants === 'string' ? JSON.parse(product.variants) : product.variants)
-        : [];
-      return Array.isArray(vs) ? vs.map((v: any) => String(v?.sku || '')).filter(Boolean) : [];
-    } catch {
-      return [];
-    }
-  }, [product]);
-
-  // Always call hooks at top-level; enable when SKUs available
-  const { data: variantPromos = [] } = useQuery<Array<{ targetId: string; type: string; value: string; endAt: string | null }>>({
-    queryKey: ["/api/promotions/active-by-variants", { skus: variantSkus.join(',') }],
-    enabled: variantSkus.length > 0,
-  });
+ 
 
   const { data: brandRelated } = useQuery<{ products: any[] }>({
     queryKey: ["/api/products", { giBrand: product?.giBrand, page: 1, pageSize: 24 }],
@@ -196,37 +176,10 @@ export default function ProductDetail() {
             ? selectedVariant.images
             : product.images
         );
-        const priceNumLocal = selectedVariant ? Number(selectedVariant.price) : Number(product.price);
-        const promoLocal = (activePromotions || []).find(p => p.productId === product.id);
-        let discountedLocal: number | undefined = undefined;
-        if (selectedVariant) {
-          const vp = variantPromos.find((p: any) => p.targetId === selectedVariant.sku);
-          if (vp) {
-            if (vp.type === 'percentage') {
-              const pct = parseFloat(vp.value);
-              discountedLocal = Math.max(0, priceNumLocal * (100 - pct) / 100);
-            } else if (vp.type === 'fixed') {
-              const val = parseFloat(vp.value);
-              discountedLocal = Math.max(0, priceNumLocal - val);
-            } else if (vp.type === 'override' || vp.type === 'fixed_override') {
-              const val = parseFloat(vp.value);
-              discountedLocal = Math.max(0, val);
-            }
-          }
-        } else if (promoLocal) {
-          if (promoLocal.type === 'percentage') {
-            const pct = parseFloat(promoLocal.value);
-            discountedLocal = Math.max(0, priceNumLocal * (100 - pct) / 100);
-          } else if (promoLocal.type === 'fixed') {
-            const val = parseFloat(promoLocal.value);
-            discountedLocal = Math.max(0, priceNumLocal - val);
-          }
-        }
         addRecentlyViewed({
           id: product.id,
           title: product.title,
           price: Number(product.price),
-          discountedPrice: discountedLocal,
           image: imagesLocal[0] || "",
           district: product.district,
           giBrand: product.giBrand,
@@ -236,7 +189,7 @@ export default function ProductDetail() {
         })
       } catch {}
     }
-  }, [product, selectedVariant, activePromotions, variantPromos]);
+  }, [product, selectedVariant]);
 
   useEffect(() => {
     try {
@@ -395,7 +348,7 @@ export default function ProductDetail() {
       return;
     }
 
-    const priceToUse = selectedVariant ? selectedVariant.price : (discounted != null ? discounted : product.price);
+    const priceToUse = selectedVariant ? selectedVariant.price : product.price;
     const titleToUse = selectedVariant ? `${product.title} (${selectedVariant.type}: ${selectedVariant.option})` : product.title;
     const stockToUse = selectedVariant ? selectedVariant.stock : product.stock;
     const skuToUse = selectedVariant ? selectedVariant.sku : undefined;
@@ -433,7 +386,7 @@ export default function ProductDetail() {
       return;
     }
 
-    const priceToUse = selectedVariant ? selectedVariant.price : (discounted != null ? discounted : product.price);
+    const priceToUse = selectedVariant ? selectedVariant.price : product.price;
     const titleToUse = selectedVariant ? `${product.title} (${selectedVariant.type}: ${selectedVariant.option})` : product.title;
     const stockToUse = selectedVariant ? selectedVariant.stock : product.stock;
 
@@ -642,85 +595,7 @@ export default function ProductDetail() {
       : product.images
   );
   const priceNum = selectedVariant ? Number(selectedVariant.price) : Number(product.price);
-  const promo = (activePromotions || []).find(p => p.productId === product.id);
-  let discounted: number | undefined = undefined;
-  let percent: number | undefined = undefined;
-  let tone: "primary" | "destructive" | "success" | "secondary" | "warning" | undefined = undefined;
-  let endsAt: string | null | undefined = promo?.endAt || undefined;
-
-  if (selectedVariant) {
-    const vp = variantPromos.find((p: any) => p.targetId === selectedVariant.sku);
-    if (vp) {
-      if (vp.type === 'percentage') {
-        const pct = parseFloat(vp.value);
-        discounted = Math.max(0, priceNum * (100 - pct) / 100);
-        percent = pct;
-        tone = "warning";
-        endsAt = vp.endAt || undefined;
-      } else if (vp.type === 'fixed') {
-        const val = parseFloat(vp.value);
-        discounted = Math.max(0, priceNum - val);
-        percent = Math.max(0, Math.round((val / Math.max(priceNum, 1)) * 100));
-        tone = "success";
-        endsAt = vp.endAt || undefined;
-      } else if (vp.type === 'override' || vp.type === 'fixed_override') {
-        const val = parseFloat(vp.value);
-        discounted = Math.max(0, val);
-        percent = undefined;
-        tone = "primary";
-        endsAt = vp.endAt || undefined;
-      } else if (vp.type === 'buy-one-get-one') {
-        const qty = quantity;
-        if (qty >= 2) {
-          const pairs = Math.floor(qty / 2);
-          const paidUnits = pairs + (qty % 2);
-          const totalForLine = priceNum * paidUnits;
-          const effectivePerUnit = totalForLine / qty;
-          discounted = Math.max(0, effectivePerUnit);
-          percent = Math.max(0, Math.round(((priceNum - discounted) / Math.max(priceNum, 1)) * 100));
-          tone = "primary";
-          endsAt = vp.endAt || undefined;
-        } else {
-          discounted = undefined;
-          percent = undefined;
-          tone = undefined;
-        }
-      }
-    } else {
-      discounted = undefined;
-      percent = undefined;
-    }
-  } else if (promo) {
-    // For now, let's assume promos apply to base price, but if variant overrides price, promo logic might need adjustment.
-    // If variant is selected, let's disable promo calculation unless we know promo applies to variants too.
-    // Simpler: If variant is selected, use variant price. If not, use promo price.
-    if (promo.type === 'percentage') {
-      const pct = parseFloat(promo.value);
-      discounted = Math.max(0, priceNum * (100 - pct) / 100);
-      percent = pct;
-      tone = "warning";
-    } else if (promo.type === 'fixed') {
-      const val = parseFloat(promo.value);
-      discounted = Math.max(0, priceNum - val);
-      percent = Math.max(0, Math.round((val / Math.max(priceNum, 1)) * 100));
-      tone = "success";
-    } else if (promo.type === 'buy-one-get-one') {
-      const qty = quantity;
-      if (qty >= 2) {
-        const pairs = Math.floor(qty / 2);
-        const paidUnits = pairs + (qty % 2);
-        const totalForLine = priceNum * paidUnits;
-        const effectivePerUnit = totalForLine / qty;
-        discounted = Math.max(0, effectivePerUnit);
-        percent = Math.max(0, Math.round(((priceNum - discounted) / Math.max(priceNum, 1)) * 100));
-        tone = "primary";
-      } else {
-        tone = "primary";
-      }
-    } else {
-      tone = "primary";
-    }
-  }
+ 
 
   const relatedProducts = (() => {
     const byCategory = (categoryRelated?.products || []).filter(p => p.id !== product.id);
@@ -903,22 +778,7 @@ export default function ProductDetail() {
                   </h1>
                   <WishlistButton productId={product.id} variant="outline" size="sm" stopPropagation={false} />
                 </div>
-                {percent != null && (
-                  <div className="flex items-center gap-2">
-                    <DiscountBadge percent={percent} tone={tone || "destructive"} size="md" />
-                    {endsAt && (
-                      <span className="text-xs px-2 py-0.5 rounded bg-black/50 text-white" data-testid="text-detail-countdown">
-                        {(() => {
-                          const ends = new Date(endsAt as any).getTime();
-                          const diff = Math.max(0, ends - Date.now());
-                          const d = Math.floor(diff / (1000 * 60 * 60 * 24));
-                          const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                          return d > 0 ? `${d}d ${h}h remaining` : `${h}h remaining`;
-                        })()}
-                      </span>
-                    )}
-                  </div>
-                )}
+ 
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge variant="secondary" data-testid="badge-district">
                     <MapPin className="w-3 h-3 mr-1" />
@@ -949,21 +809,9 @@ export default function ProductDetail() {
               </div>
 
               <div>
-                {discounted != null ? (
-                  <div className="flex items-baseline gap-2">
-                    <Badge className="bg-red-600 text-white">SALE</Badge>
-                    <p className="text-3xl font-bold text-primary" data-testid="text-price" aria-live="polite">
-                      {formatPrice(discounted)}
-                    </p>
-                    <p className="text-lg line-through text-muted-foreground" data-testid="text-original-price-detail">
-                      {formatPrice(product.price)}
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-3xl font-bold text-primary" data-testid="text-price" aria-live="polite">
-                    {formatPrice(priceNum)}
-                  </p>
-                )}
+                <p className="text-3xl font-bold text-primary" data-testid="text-price" aria-live="polite">
+                  {formatPrice(priceNum)}
+                </p>
                 <p className="text-sm text-muted-foreground mt-1" data-testid="text-stock" aria-live="polite">
                   {isOutOfStock ? 'Currently unavailable' : `${selectedVariant ? selectedVariant.stock : product.stock} in stock`}
                 </p>
@@ -1311,9 +1159,9 @@ export default function ProductDetail() {
             offers: {
               "@type": "Offer",
               priceCurrency: "PKR",
-              price: discounted != null ? discounted : priceNum,
+              price: priceNum,
               availability: isOutOfStock ? "https://schema.org/OutOfStock" : "https://schema.org/InStock",
-              priceValidUntil: endsAt || undefined,
+              priceValidUntil: undefined,
               url: getShareUrl(),
             },
           };
@@ -1573,7 +1421,6 @@ export default function ProductDetail() {
                         title={p.title}
                         description={p.description || ""}
                         price={Number(p.price)}
-                        discountedPrice={p.discountedPrice != null ? Number(p.discountedPrice) : undefined}
                         image={(p.images || [])[0] || ""}
                         district={p.district}
                         giBrand={p.giBrand}
@@ -1582,9 +1429,6 @@ export default function ProductDetail() {
                         stock={Number(p.stock || 0)}
                         ratingAverage={Number(p.ratingAverage || 0)}
                         ratingCount={Number(p.ratingCount || 0)}
-                        promotionPercent={p.promotionPercent != null ? Number(p.promotionPercent) : undefined}
-                        promotionTone={p.promotionTone}
-                        promotionEndsAt={p.promotionEndsAt || undefined}
                       />
                     </CarouselItem>
                   ))}

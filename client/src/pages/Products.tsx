@@ -68,19 +68,7 @@ export default function Products() {
     queryKey: ['/api/products', queryParams],
   });
 
-  const productIds = (productsData?.products || []).map(p => p.id);
-  const idsParam = productIds.join(',');
-  const { data: activePromotions = [] } = useQuery<Array<{ productId: string; promotionId: string; type: string; value: string; endAt: string | null }>>({
-    queryKey: ['/api/promotions/active-by-products', { ids: idsParam }],
-    enabled: productIds.length > 0,
-  });
-  const promoMap = useMemo(() => {
-    const m = new Map<string, { type: string; value: string; endAt: string | null }>();
-    for (const item of activePromotions) {
-      if (!m.has(item.productId)) m.set(item.productId, { type: item.type, value: item.value, endAt: item.endAt });
-    }
-    return m;
-  }, [activePromotions]);
+ 
 
   const handleResetFilters = () => {
     setSearch("");
@@ -167,38 +155,12 @@ export default function Products() {
 
   const featuredProducts = productsData?.products.map(product => {
     const normalizedImage = product.images[0] ? (product.images[0].startsWith('/') ? product.images[0] : `/${product.images[0]}`) : '';
-    const promo = promoMap.get(product.id);
     const priceNum = Number(product.price);
-    let discounted: number | undefined = undefined;
-    let percent = undefined as number | undefined;
-    let tone = undefined as "primary" | "destructive" | "success" | "secondary" | "warning" | undefined;
-    if (promo) {
-      if (promo.type === 'percentage') {
-        const pct = parseFloat(promo.value);
-        discounted = Math.max(0, priceNum * (100 - pct) / 100);
-        percent = pct;
-        tone = "warning";
-      } else if (promo.type === 'fixed') {
-        const val = parseFloat(promo.value);
-        discounted = Math.max(0, priceNum - val);
-        percent = Math.max(0, Math.round((val / Math.max(priceNum, 1)) * 100));
-        tone = "success";
-      } else if (promo.type === 'buy-one-get-one') {
-        const discountedPerUnit = priceNum * 0.5;
-        discounted = Math.max(0, discountedPerUnit);
-        percent = 50;
-        tone = "primary";
-      } else {
-        percent = undefined;
-        tone = "primary";
-      }
-    }
     return {
       id: product.id,
       title: product.title,
       description: product.description || undefined,
       price: Number(product.price),
-      discountedPrice: discounted,
       image: imagePathMap[normalizedImage] || normalizedImage || multanImage,
       district: product.district,
       giBrand: product.giBrand,
@@ -207,9 +169,6 @@ export default function Products() {
       stock: product.stock,
       ratingAverage: (product as any).ratingAverage || 0,
       ratingCount: (product as any).ratingCount || 0,
-      promotionPercent: percent,
-      promotionTone: tone,
-      promotionEndsAt: promo?.endAt || undefined,
     };
   }) || [];
 
@@ -219,15 +178,15 @@ export default function Products() {
     const arr = [...featuredProducts];
     if (sort === "price_asc") {
       return arr.sort((a, b) => {
-        const ap = a.discountedPrice ?? a.price;
-        const bp = b.discountedPrice ?? b.price;
+        const ap = a.price as number;
+        const bp = b.price as number;
         return ap - bp;
       });
     }
     if (sort === "price_desc") {
       return arr.sort((a, b) => {
-        const ap = a.discountedPrice ?? a.price;
-        const bp = b.discountedPrice ?? b.price;
+        const ap = a.price as number;
+        const bp = b.price as number;
         return bp - ap;
       });
     }

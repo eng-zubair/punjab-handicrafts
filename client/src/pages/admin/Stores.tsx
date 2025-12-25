@@ -29,7 +29,6 @@ type StoreActivities = {
   fulfilledOrders: number;
   canceledOrders: number;
   revenue: string;
-  discounts: number;
 };
 
 type Product = {
@@ -253,11 +252,7 @@ export default function AdminStores() {
                   <div className="font-semibold">{activities.fulfilledOrders}</div>
                 </div>
                 <div className="flex items-center justify-between p-3 border rounded-md">
-                  <div className="flex items-center gap-2"><Tag className="w-4 h-4" /><span>Discount Promotions</span></div>
-                  <div className="font-semibold">{activities.discounts}</div>
-                </div>
-                <div className="flex items-center justify-between p-3 border rounded-md">
-                  <div className="flex items-center gap-2"><TrendingUp className="w-4 h-4" /><span>Revenue</span></div>
+                  <div className="flex items-center gap-2"><StoreIcon className="w-4 h-4" /><span>Revenue</span></div>
                   <div className="font-semibold">{activities.revenue}</div>
                 </div>
                 <div className="flex items-center justify-between p-3 border rounded-md">

@@ -20,7 +20,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import PromotionsTab from "@/components/vendor/PromotionsTab";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -110,33 +109,7 @@ type ProductGroup = {
   createdAt: string;
 };
 
-type Promotion = {
-  id: string;
-  storeId: string;
-  name: string;
-  description: string | null;
-  type: 'percentage' | 'fixed' | 'buy-one-get-one';
-  value: string;
-  minQuantity: number | null;
-  appliesTo: 'all' | 'product' | 'group';
-  targetId: string | null;
-  startAt: string | null;
-  endAt: string | null;
-  status: 'active' | 'scheduled' | 'expired';
-  createdAt: string;
-};
-
-type PromotionProductWithPromotion = {
-  id: string;
-  promotionId: string;
-  productId: string;
-  overridePrice: string | null;
-  quantityLimit: number;
-  conditions?: any;
-  createdAt: string;
-  promotion: Promotion;
-  isActive: boolean;
-};
+ 
 
 type Category = {
   id: string;
@@ -198,10 +171,6 @@ export default function VendorProducts() {
 
 
 
-  const { data: promotionProducts = [] } = useQuery<PromotionProductWithPromotion[]>({
-    queryKey: ['/api/vendor/promotion-products'],
-  });
-
   const { data: adminProductCategories = [] } = useQuery<ProductCategory[]>({
     queryKey: ['/api/product-categories'],
   });
@@ -213,22 +182,7 @@ export default function VendorProducts() {
     return p.status === activeTab;
   });
 
-  const [promotionFilter, setPromotionFilter] = useState<'all' | 'in' | 'out'>('all');
-
-  const activePromosByProduct = new Map<string, PromotionProductWithPromotion[]>();
-  for (const pp of promotionProducts) {
-    if (pp.isActive) {
-      const arr = activePromosByProduct.get(pp.productId) || [];
-      arr.push(pp);
-      activePromosByProduct.set(pp.productId, arr);
-    }
-  }
-
-  const filteredByPromotion = filteredProducts.filter(p => {
-    if (promotionFilter === 'all') return true;
-    const hasActive = (activePromosByProduct.get(p.id) || []).length > 0;
-    return promotionFilter === 'in' ? hasActive : !hasActive;
-  });
+ 
 
 
 
@@ -463,8 +417,8 @@ export default function VendorProducts() {
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold" data-testid="heading-products">Products & Promotions</h1>
-            <p className="text-muted-foreground">Manage your catalog, groups, and promotions</p>
+            <h1 className="text-3xl font-bold" data-testid="heading-products">Products & Groups</h1>
+            <p className="text-muted-foreground">Manage your catalog and groups</p>
           </div>
           {mainTab === "products" && (
             <div className="flex space-x-2">
@@ -517,10 +471,6 @@ export default function VendorProducts() {
               <Layers className="w-4 h-4 mr-2" />
               Groups
             </TabsTrigger>
-            <TabsTrigger value="promotions" data-testid="tab-main-promotions">
-              <Tag className="w-4 h-4 mr-2" />
-              Promotions
-            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="products" className="mt-6">
@@ -543,7 +493,7 @@ export default function VendorProducts() {
               <TabsContent value={activeTab} className="mt-6">
                 {isLoading ? (
                   <p className="text-muted-foreground">Loading products...</p>
-                ) : filteredByPromotion.length === 0 ? (
+                ) : filteredProducts.length === 0 ? (
                   <Card>
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
@@ -564,21 +514,6 @@ export default function VendorProducts() {
                   </Card>
                 ) : (
                   <Card>
-                    <div className="flex items-center justify-end px-4 pt-4">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-muted-foreground">Promotion</span>
-                        <Select value={promotionFilter} onValueChange={(v) => setPromotionFilter(v as any)}>
-                          <SelectTrigger className="w-[180px]">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All</SelectItem>
-                            <SelectItem value="in">In Promotion</SelectItem>
-                            <SelectItem value="out">Not In Promotion</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
                     <div className="overflow-x-auto">
                       <Table className="min-w-[900px]">
                         <TableHeader>
@@ -589,13 +524,12 @@ export default function VendorProducts() {
                             <TableHead>Price</TableHead>
                             <TableHead>Stock</TableHead>
                             <TableHead>Status</TableHead>
-                            <TableHead>Promotion</TableHead>
                             <TableHead>Active</TableHead>
                             <TableHead className="text-right">Actions</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {filteredByPromotion.map((product) => (
+                          {filteredProducts.map((product) => (
                             <TableRow key={product.id} data-testid={`row-product-${product.id}`}>
                               <TableCell>
                                 <div className="w-16 h-16 rounded bg-muted overflow-hidden">
@@ -648,30 +582,6 @@ export default function VendorProducts() {
                               </TableCell>
                               <TableCell>
                                 {getStatusBadge(product.status)}
-                              </TableCell>
-                              <TableCell>
-                                {(() => {
-                                  const aps = activePromosByProduct.get(product.id) || [];
-                                  if (aps.length === 0) {
-                                    return <Badge variant="secondary">None</Badge>;
-                                  }
-                                  const p = aps[0].promotion;
-                                  const label = p.type === 'percentage' ? `${p.value}% off` : p.type === 'fixed' ? `PKR ${p.value} off` : 'BOGO';
-                                  const ends = p.endAt ? new Date(p.endAt).getTime() : null;
-                                  let countdown = '';
-                                  if (ends) {
-                                    const diff = Math.max(0, ends - Date.now());
-                                    const d = Math.floor(diff / (1000 * 60 * 60 * 24));
-                                    const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                                    countdown = d > 0 ? `${d}d ${h}h` : `${h}h`;
-                                  }
-                                  return (
-                                    <div className="flex items-center gap-2">
-                                      <Badge>{label}</Badge>
-                                      {countdown && <span className="text-xs text-muted-foreground">ends in {countdown}</span>}
-                                    </div>
-                                  );
-                                })()}
                               </TableCell>
                               <TableCell>
                                 <Switch
@@ -788,10 +698,7 @@ export default function VendorProducts() {
             )}
           </TabsContent>
 
-          <TabsContent value="promotions" className="mt-6">
-            <PromotionsTab />
-          </TabsContent>
-        </Tabs>
+          </Tabs>
 
         {/* Edit Dialog */}
         <Dialog open={editDialogOpen} onOpenChange={(open) => {

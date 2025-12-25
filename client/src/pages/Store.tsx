@@ -55,19 +55,7 @@ export default function Store() {
     },
   });
 
-  const productIds = (products || []).map(p => p.id);
-  const idsParam = productIds.join(',');
-  const { data: activePromotions = [] } = useQuery<Array<{ productId: string; promotionId: string; type: string; value: string; endAt: string | null }>>({
-    queryKey: ['/api/promotions/active-by-products', { ids: idsParam }],
-    enabled: productIds.length > 0,
-  });
-  const promoMap = useMemo(() => {
-    const m = new Map<string, { type: string; value: string; endAt: string | null }>();
-    for (const item of activePromotions) {
-      if (!m.has(item.productId)) m.set(item.productId, { type: item.type, value: item.value, endAt: item.endAt });
-    }
-    return m;
-  }, [activePromotions]);
+ 
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -147,54 +135,25 @@ export default function Store() {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 {products.map((p) => {
-                  const promo = promoMap.get(p.id);
                   const priceNum = Number(p.price);
-                  let discounted: number | undefined = undefined;
-                  let percent = undefined as number | undefined;
-                  let tone = undefined as "primary" | "destructive" | "success" | "secondary" | "warning" | undefined;
-                  if (promo) {
-                    if (promo.type === 'percentage') {
-                      const pct = parseFloat(promo.value);
-                      discounted = Math.max(0, priceNum * (100 - pct) / 100);
-                      percent = pct;
-                      tone = "warning";
-                    } else if (promo.type === 'fixed') {
-                      const val = parseFloat(promo.value);
-                      discounted = Math.max(0, priceNum - val);
-                      percent = Math.max(0, Math.round((val / Math.max(priceNum, 1)) * 100));
-                      tone = "success";
-                    } else if (promo.type === 'buy-one-get-one') {
-                      const discountedPerUnit = priceNum * 0.5;
-                      discounted = Math.max(0, discountedPerUnit);
-                      percent = 50;
-                      tone = "primary";
-                    } else {
-                      percent = undefined;
-                      tone = "primary";
-                    }
-                  }
                   return (
-                    <ProductCard
-                      key={p.id}
-                      id={p.id}
-                      title={p.title}
-                      description={p.description || undefined}
-                      price={priceNum}
-                      discountedPrice={discounted}
-                      image={(p.images && p.images[0]) || "/attached_assets/generated_images/Handmade_khussa_footwear_product_06baa0d0.png"}
-                      district={p.district}
-                      giBrand={p.giBrand}
-                      vendorName={store?.name || "Artisan Vendor"}
-                      storeId={p.storeId}
-                      stock={p.stock || 10}
-                      ratingAverage={p.ratingAverage || 0}
-                      ratingCount={p.ratingCount || 0}
-                      promotionPercent={percent}
-                      promotionTone={tone}
-                      promotionEndsAt={promo?.endAt || undefined}
-                    />
-                  );
-                })}
+                  <ProductCard
+                    key={p.id}
+                    id={p.id}
+                    title={p.title}
+                    description={p.description || undefined}
+                    price={priceNum}
+                    image={(p.images && p.images[0]) || "/attached_assets/generated_images/Handmade_khussa_footwear_product_06baa0d0.png"}
+                    district={p.district}
+                    giBrand={p.giBrand}
+                    vendorName={store?.name || "Artisan Vendor"}
+                    storeId={p.storeId}
+                    stock={p.stock || 10}
+                    ratingAverage={p.ratingAverage || 0}
+                    ratingCount={p.ratingCount || 0}
+                  />
+                );
+              })}
               </div>
             )}
           </div>
