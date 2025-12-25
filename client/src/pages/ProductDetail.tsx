@@ -669,6 +669,22 @@ export default function ProductDetail() {
         percent = undefined;
         tone = "primary";
         endsAt = vp.endAt || undefined;
+      } else if (vp.type === 'buy-one-get-one') {
+        const qty = quantity;
+        if (qty >= 2) {
+          const pairs = Math.floor(qty / 2);
+          const paidUnits = pairs + (qty % 2);
+          const totalForLine = priceNum * paidUnits;
+          const effectivePerUnit = totalForLine / qty;
+          discounted = Math.max(0, effectivePerUnit);
+          percent = Math.max(0, Math.round(((priceNum - discounted) / Math.max(priceNum, 1)) * 100));
+          tone = "primary";
+          endsAt = vp.endAt || undefined;
+        } else {
+          discounted = undefined;
+          percent = undefined;
+          tone = undefined;
+        }
       }
     } else {
       discounted = undefined;
@@ -688,6 +704,19 @@ export default function ProductDetail() {
       discounted = Math.max(0, priceNum - val);
       percent = Math.max(0, Math.round((val / Math.max(priceNum, 1)) * 100));
       tone = "success";
+    } else if (promo.type === 'buy-one-get-one') {
+      const qty = quantity;
+      if (qty >= 2) {
+        const pairs = Math.floor(qty / 2);
+        const paidUnits = pairs + (qty % 2);
+        const totalForLine = priceNum * paidUnits;
+        const effectivePerUnit = totalForLine / qty;
+        discounted = Math.max(0, effectivePerUnit);
+        percent = Math.max(0, Math.round(((priceNum - discounted) / Math.max(priceNum, 1)) * 100));
+        tone = "primary";
+      } else {
+        tone = "primary";
+      }
     } else {
       tone = "primary";
     }

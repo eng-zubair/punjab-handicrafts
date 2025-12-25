@@ -2240,24 +2240,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (ids.length === 0) {
         return res.json([]);
       }
+      // 1) Gather promotions explicitly attached to products
       const rows = await db
         .select()
         .from(promotionProducts)
         .where(inArray(promotionProducts.productId, ids));
-      const promoIds = Array.from(new Set(rows.map(r => r.promotionId))).filter(Boolean);
-      const promos = promoIds.length ? await db.select().from(promotions).where(inArray(promotions.id, promoIds)) : [];
-      const pmap = new Map(promos.map(p => [p.id, p]));
+      const attachedPromoIds = Array.from(new Set(rows.map(r => r.promotionId))).filter(Boolean);
+      const attachedPromos = attachedPromoIds.length
+        ? await db.select().from(promotions).where(inArray(promotions.id, attachedPromoIds))
+        : [];
+      const attachedMap = new Map(attachedPromos.map(p => [p.id, p]));
+
+      // 2) Gather store-wide promotions (appliesTo = 'order' | 'all') for the stores of the given products
+      const productsForStores = await db
+        .select({ id: products.id, storeId: products.storeId })
+        .from(products)
+        .where(inArray(products.id, ids));
+      const productToStore = new Map(productsForStores.map(r => [r.id, r.storeId]));
+      const uniqueStoreIds = Array.from(new Set(productsForStores.map(r => r.storeId))).filter(Boolean);
+      const storeWidePromos = uniqueStoreIds.length
+        ? await db
+            .select()
+            .from(promotions)
+            .where(and(inArray(promotions.storeId, uniqueStoreIds), inArray(promotions.appliesTo, ['order', 'all'] as any)))
+        : [];
+
       const now = Date.now();
-      const out: Array<{ productId: string; promotionId: string; type: string; value: string; endAt: string | null }> = [];
+      // Build candidate promotions per productId, then choose top by priority (attached preferred on tie)
+      const candidatesByProduct = new Map<string, Array<{ promotionId: string; type: string; value: string; endAt: string | null; priority: number; source: 'attached' | 'store' }>>();
+
       for (const r of rows) {
-        const p = pmap.get(r.promotionId);
+        const p = attachedMap.get(r.promotionId);
         if (!p) continue;
         const startOk = !p.startAt || new Date(p.startAt).getTime() <= now;
         const endOk = !p.endAt || new Date(p.endAt).getTime() >= now;
         const isActive = p.status === 'active' && startOk && endOk;
         if (!isActive) continue;
-        out.push({ productId: r.productId, promotionId: r.promotionId, type: p.type, value: String(p.value), endAt: p.endAt ? String(p.endAt) : null });
+        const list = candidatesByProduct.get(r.productId) || [];
+        list.push({
+          promotionId: r.promotionId,
+          type: p.type as any,
+          value: String(p.value),
+          endAt: p.endAt ? String(p.endAt) : null,
+          priority: Number(p.priority ?? 0),
+          source: 'attached',
+        });
+        candidatesByProduct.set(r.productId, list);
       }
+
+      for (const pid of ids) {
+        const storeId = productToStore.get(pid);
+        if (!storeId) continue;
+        for (const promo of storeWidePromos) {
+          if (promo.storeId !== storeId) continue;
+          const startOk = !promo.startAt || new Date(promo.startAt).getTime() <= now;
+          const endOk = !promo.endAt || new Date(promo.endAt).getTime() >= now;
+          const isActive = promo.status === 'active' && startOk && endOk;
+          if (!isActive) continue;
+          const list = candidatesByProduct.get(pid) || [];
+          list.push({
+            promotionId: promo.id,
+            type: promo.type as any,
+            value: String(promo.value),
+            endAt: promo.endAt ? String(promo.endAt) : null,
+            priority: Number(promo.priority ?? 0),
+            source: 'store',
+          });
+          candidatesByProduct.set(pid, list);
+        }
+      }
+
+      // Pick one per product: highest priority; prefer attached over store-wide on tie
+      const out: Array<{ productId: string; promotionId: string; type: string; value: string; endAt: string | null }> = [];
+      for (const pid of ids) {
+        const candidates = candidatesByProduct.get(pid) || [];
+        if (candidates.length === 0) continue;
+        candidates.sort((a, b) => {
+          if (b.priority !== a.priority) return b.priority - a.priority;
+          // attached preferred to store-wide on tie
+          if (a.source !== b.source) return a.source === 'attached' ? -1 : 1;
+          return 0;
+        });
+        const top = candidates[0];
+        out.push({
+          productId: pid,
+          promotionId: top.promotionId,
+          type: top.type,
+          value: top.value,
+          endAt: top.endAt,
+        });
+      }
+
       res.json(out);
     } catch (error) {
       console.error('Error fetching active promotions by products:', error);
@@ -2717,6 +2790,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
             candidates.push(Math.max(0, base - valNum));
           } else if ((ap.type === 'override' || ap.type === 'fixed_override') && !Number.isNaN(valNum)) {
             candidates.push(Math.max(0, valNum));
+          } else if (ap.type === 'buy-one-get-one') {
+            const qty = item.quantity;
+            if (qty >= 2) {
+              const pairs = Math.floor(qty / 2);
+              const paidUnits = pairs + (qty % 2);
+              const totalForLine = base * paidUnits;
+              const effectivePerUnit = totalForLine / qty;
+              candidates.push(Math.max(0, effectivePerUnit));
+            }
           }
         }
         effectivePrice = Number(Math.min(...candidates).toFixed(2));

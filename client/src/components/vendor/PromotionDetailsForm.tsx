@@ -257,7 +257,7 @@ export function PromotionDetailsForm({
                                             <SelectContent>
                                                 <SelectItem value="percentage">Percentage (%)</SelectItem>
                                                 <SelectItem value="fixed">Fixed Amount (PKR)</SelectItem>
-                                                {/* Simplify for now, allow rules to handle complex BOGO logic if needed */}
+                                                <SelectItem value="buy-one-get-one">Buy One Get One (BOGO)</SelectItem>
                                             </SelectContent>
                                         </Select>
                                         <FormMessage />
@@ -289,30 +289,32 @@ export function PromotionDetailsForm({
                             <FormField
                                 control={form.control}
                                 name="startAt"
-                                render={({ field }) => (
-                                    <FormItem>
-                                        <FormLabel>Start Date</FormLabel>
-                                        <FormControl>
-                                            <Input type="datetime-local" {...field} value={field.value as string || ''} />
-                                        </FormControl>
-                                        <FormMessage />
-                                    </FormItem>
-                                )}
-                            />
+                            render={({ field }) => (
+                                <FormItem>
+                                    <FormLabel>Start Date</FormLabel>
+                                    <FormControl>
+                                        <Input type="datetime-local" {...field} value={field.value as string || ''} />
+                                    </FormControl>
+                                    <FormDescription>Leave blank to start immediately</FormDescription>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
 
                             <FormField
                                 control={form.control}
                                 name="endAt"
-                                render={({ field }) => (
-                                    <FormItem>
-                                        <FormLabel>End Date</FormLabel>
-                                        <FormControl>
-                                            <Input type="datetime-local" {...field} value={field.value as string || ''} />
-                                        </FormControl>
-                                        <FormMessage />
-                                    </FormItem>
-                                )}
-                            />
+                            render={({ field }) => (
+                                <FormItem>
+                                    <FormLabel>End Date</FormLabel>
+                                    <FormControl>
+                                        <Input type="datetime-local" {...field} value={field.value as string || ''} />
+                                    </FormControl>
+                                    <FormDescription>Leave blank to never expire</FormDescription>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">

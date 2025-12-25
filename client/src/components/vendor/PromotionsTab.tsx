@@ -231,7 +231,13 @@ export default function PromotionsTab() {
                                     <div className="flex items-center text-muted-foreground">
                                         <Tag className="mr-2 h-4 w-4 opacity-70" />
                                         <span className="font-medium mr-1 text-foreground">
-                                            {promo.type === 'percentage' ? `${promo.value}% Off` : `PKR ${promo.value} Off`}
+                                            {promo.type === 'percentage'
+                                                ? `${promo.value}% Off`
+                                                : promo.type === 'fixed'
+                                                    ? `PKR ${promo.value} Off`
+                                                    : promo.type === 'buy-one-get-one'
+                                                        ? 'Buy One Get One'
+                                                        : promo.value}
                                         </span>
                                         <span className="text-xs">via {promo.type}</span>
                                     </div>

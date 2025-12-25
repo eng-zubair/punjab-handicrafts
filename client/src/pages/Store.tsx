@@ -163,6 +163,11 @@ export default function Store() {
                       discounted = Math.max(0, priceNum - val);
                       percent = Math.max(0, Math.round((val / Math.max(priceNum, 1)) * 100));
                       tone = "success";
+                    } else if (promo.type === 'buy-one-get-one') {
+                      const discountedPerUnit = priceNum * 0.5;
+                      discounted = Math.max(0, discountedPerUnit);
+                      percent = 50;
+                      tone = "primary";
                     } else {
                       percent = undefined;
                       tone = "primary";
