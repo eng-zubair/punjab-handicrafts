@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/breadcrumb";
 import { AlertCircle, ShoppingCart, Store, MapPin, Award, Minus, Plus, ArrowLeft, Star, RotateCcw, Link as LinkIcon, Truck, Wallet, ShieldCheck, ArrowLeftRight } from "lucide-react";
 import { useState, useEffect, useMemo, useRef } from "react";
-import type { Product, Variant } from "@shared/schema";
+import type { Product, Variant, Offer } from "@shared/schema";
 import { addToCart } from "@/lib/cart";
 import { useToast } from "@/hooks/use-toast";
 import { formatPrice, toSafeNumber } from "@/lib/utils/price";
@@ -108,6 +108,10 @@ export default function ProductDetail() {
     enabled: !!product?.storeId,
   });
 
+  const { data: activeOffers } = useQuery<Offer[]>({
+    queryKey: [`/api/stores/${product?.storeId}/offers/active`],
+    enabled: !!product?.storeId,
+  });
   const { data: reviewData, isLoading: reviewsLoading, isError: reviewsError, error: reviewsErrorData, refetch: refetchReviews } = useQuery<{ reviews: any[]; stats: { count: number; average: number } }>({
     queryKey: [`/api/products/${id}/reviews`, { sort }],
     enabled: !!id,
@@ -348,7 +352,7 @@ export default function ProductDetail() {
       return;
     }
 
-    const priceToUse = selectedVariant ? selectedVariant.price : product.price;
+    const priceToUse = priceNum;
     const titleToUse = selectedVariant ? `${product.title} (${selectedVariant.type}: ${selectedVariant.option})` : product.title;
     const stockToUse = selectedVariant ? selectedVariant.stock : product.stock;
     const skuToUse = selectedVariant ? selectedVariant.sku : undefined;
@@ -386,7 +390,7 @@ export default function ProductDetail() {
       return;
     }
 
-    const priceToUse = selectedVariant ? selectedVariant.price : product.price;
+    const priceToUse = priceNum;
     const titleToUse = selectedVariant ? `${product.title} (${selectedVariant.type}: ${selectedVariant.option})` : product.title;
     const stockToUse = selectedVariant ? selectedVariant.stock : product.stock;
 
@@ -594,7 +598,57 @@ export default function ProductDetail() {
       ? selectedVariant.images
       : product.images
   );
-  const priceNum = selectedVariant ? Number(selectedVariant.price) : Number(product.price);
+  const basePrice = selectedVariant ? Number(selectedVariant.price) : Number(product.price);
+  const priceNum = (() => {
+    const base = basePrice;
+    const list = activeOffers || [];
+    if (!list || list.length === 0) return base;
+    const sku = selectedVariant?.sku || null;
+    const candidates = list.filter((o: any) => {
+      const t = String(o.scopeType || 'products').toLowerCase();
+      if (t === 'all') return true;
+      if (t === 'products') return Array.isArray(o.scopeProducts) && o.scopeProducts.includes(product.id);
+      if (t === 'categories') return Array.isArray(o.scopeCategories) && o.scopeCategories.includes(String(product.category));
+      if (t === 'variants') return sku != null && Array.isArray(o.scopeVariants) && o.scopeVariants.includes(String(sku));
+      return false;
+    });
+    if (candidates.length === 0) return base;
+    let best = base;
+    for (const o of candidates) {
+      const dv = Number(o.discountValue);
+      const dt = String(o.discountType || 'percentage').toLowerCase();
+      const cand = dt === 'fixed' ? Math.max(0, base - dv) : Math.max(0, base * (1 - dv / 100));
+      if (cand < best) best = cand;
+    }
+    return best;
+  })();
+
+  const offerApplied = priceNum < basePrice;
+  const offerBadgeText = (() => {
+    const list = activeOffers || [];
+    if (!offerApplied || !list || list.length === 0) return null;
+    const sku = selectedVariant?.sku || null;
+    const candidates = list.filter((o: any) => {
+      const t = String(o.scopeType || 'products').toLowerCase();
+      if (t === 'all') return true;
+      if (t === 'products') return Array.isArray(o.scopeProducts) && o.scopeProducts.includes(product.id);
+      if (t === 'categories') return Array.isArray(o.scopeCategories) && o.scopeCategories.includes(String(product.category));
+      if (t === 'variants') return sku != null && Array.isArray(o.scopeVariants) && o.scopeVariants.includes(String(sku));
+      return false;
+    });
+    let best = basePrice;
+    let text: string | null = null;
+    for (const o of candidates) {
+      const dv = Number(o.discountValue);
+      const dt = String(o.discountType || 'percentage').toLowerCase();
+      const cand = dt === 'fixed' ? Math.max(0, basePrice - dv) : Math.max(0, basePrice * (1 - dv / 100));
+      if (cand < best) {
+        best = cand;
+        text = o.badgeText || 'Offer';
+      }
+    }
+    return text;
+  })();
  
 
   const relatedProducts = (() => {
@@ -809,9 +863,19 @@ export default function ProductDetail() {
               </div>
 
               <div>
-                <p className="text-3xl font-bold text-primary" data-testid="text-price" aria-live="polite">
-                  {formatPrice(priceNum)}
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="text-3xl font-bold text-primary" data-testid="text-price" aria-live="polite">
+                    {formatPrice(priceNum)}
+                  </p>
+                  {offerApplied && offerBadgeText ? (
+                    <Badge variant="secondary">{offerBadgeText}</Badge>
+                  ) : null}
+                </div>
+                {offerApplied ? (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    <span className="line-through mr-2">{formatPrice(basePrice)}</span>
+                  </p>
+                ) : null}
                 <p className="text-sm text-muted-foreground mt-1" data-testid="text-stock" aria-live="polite">
                   {isOutOfStock ? 'Currently unavailable' : `${selectedVariant ? selectedVariant.stock : product.stock} in stock`}
                 </p>
@@ -1420,7 +1484,27 @@ export default function ProductDetail() {
                         id={p.id}
                         title={p.title}
                         description={p.description || ""}
-                        price={Number(p.price)}
+                        price={(() => {
+                          const base = Number(p.price);
+                          const list = p.storeId === product.storeId ? (activeOffers || []) : [];
+                          if (!list || list.length === 0) return base;
+                          const candidates = list.filter((o: any) => {
+                            const t = String(o.scopeType || 'products').toLowerCase();
+                            if (t === 'all') return true;
+                            if (t === 'products') return Array.isArray(o.scopeProducts) && o.scopeProducts.includes(p.id);
+                            if (t === 'categories') return Array.isArray(o.scopeCategories) && o.scopeCategories.includes(String(p.category));
+                            return false;
+                          });
+                          if (candidates.length === 0) return base;
+                          let best = base;
+                          for (const o of candidates) {
+                            const dv = Number(o.discountValue);
+                            const dt = String(o.discountType || 'percentage').toLowerCase();
+                            const cand = dt === 'fixed' ? Math.max(0, base - dv) : Math.max(0, base * (1 - dv / 100));
+                            if (cand < best) best = cand;
+                          }
+                          return best;
+                        })()}
                         image={(p.images || [])[0] || ""}
                         district={p.district}
                         giBrand={p.giBrand}

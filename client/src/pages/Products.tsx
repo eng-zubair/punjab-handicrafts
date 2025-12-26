@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import type { Category, Product, Store } from "@shared/schema";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
@@ -68,6 +68,26 @@ export default function Products() {
     queryKey: ['/api/products', queryParams],
   });
 
+  const storeIds = useMemo(() => {
+    const ids = Array.from(new Set((productsData?.products || []).map(p => p.storeId).filter(Boolean)));
+    return ids;
+  }, [productsData]);
+
+  const offersQueries = useQueries({
+    queries: storeIds.map((sid) => ({
+      queryKey: [`/api/stores/${sid}/offers/active`],
+      enabled: !!sid,
+    })),
+  });
+
+  const offersByStoreId: Record<string, any[] | undefined> = useMemo(() => {
+    const map: Record<string, any[] | undefined> = {};
+    storeIds.forEach((sid, idx) => {
+      const q = offersQueries[idx];
+      map[sid] = (q?.data as any[] | undefined) || undefined;
+    });
+    return map;
+  }, [storeIds, offersQueries]);
  
 
   const handleResetFilters = () => {
@@ -155,12 +175,35 @@ export default function Products() {
 
   const featuredProducts = productsData?.products.map(product => {
     const normalizedImage = product.images[0] ? (product.images[0].startsWith('/') ? product.images[0] : `/${product.images[0]}`) : '';
-    const priceNum = Number(product.price);
+    const base = Number(product.price);
+    const list = offersByStoreId[product.storeId] || [];
+    let priceNum = base;
+    let badgeText: string | undefined = undefined;
+    if (list && list.length > 0) {
+      const candidates = list.filter((o: any) => {
+        const t = String(o.scopeType || 'products').toLowerCase();
+        if (t === 'all') return true;
+        if (t === 'products') return Array.isArray(o.scopeProducts) && o.scopeProducts.includes(product.id);
+        if (t === 'categories') return Array.isArray(o.scopeCategories) && o.scopeCategories.includes(String((product as any).category));
+        return false;
+      });
+      for (const o of candidates) {
+        const dv = Number(o.discountValue);
+        const dt = String(o.discountType || 'percentage').toLowerCase();
+        const cand = dt === 'fixed' ? Math.max(0, base - dv) : Math.max(0, base * (1 - dv / 100));
+        if (cand < priceNum) {
+          priceNum = cand;
+          badgeText = o.badgeText || (dt === 'percentage' ? `${dv}% off` : `PKR ${dv} off`);
+        }
+      }
+    }
     return {
       id: product.id,
       title: product.title,
       description: product.description || undefined,
-      price: Number(product.price),
+      price: priceNum,
+      originalPrice: priceNum < base ? base : undefined,
+      badgeText,
       image: imagePathMap[normalizedImage] || normalizedImage || multanImage,
       district: product.district,
       giBrand: product.giBrand,

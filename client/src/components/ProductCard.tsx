@@ -19,6 +19,8 @@ interface ProductCardProps {
   title: string;
   description?: string;
   price: number | string;
+  originalPrice?: number;
+  badgeText?: string;
   image: string;
   district: string;
   giBrand: string;
@@ -42,6 +44,8 @@ export default function ProductCard({
   stock = 10,
   ratingAverage = 0,
   ratingCount = 0,
+  originalPrice,
+  badgeText,
 }: ProductCardProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
@@ -154,9 +158,17 @@ export default function ProductCard({
             </div>
             <span className="text-muted-foreground">({ratingCount})</span>
           </div>
-          <p className="text-2xl font-bold text-primary" data-testid={`text-price-${id}`}>
-            {formatPrice(price)}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="text-2xl font-bold text-primary" data-testid={`text-price-${id}`}>
+              {formatPrice(price)}
+            </p>
+            {badgeText ? <span className="inline-flex items-center rounded bg-secondary px-2 py-0.5 text-xs">{badgeText}</span> : null}
+          </div>
+          {typeof originalPrice === 'number' && originalPrice > (typeof price === 'number' ? price : Number(price)) ? (
+            <p className="text-sm text-muted-foreground">
+              <span className="line-through">{formatPrice(originalPrice)}</span>
+            </p>
+          ) : null}
         </CardContent>
       </Link>
       <CardFooter className="p-4 pt-0">

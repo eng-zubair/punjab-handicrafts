@@ -24,6 +24,7 @@ type Product = {
   title: string;
   description?: string | null;
   price: string | number;
+  category?: string;
   images: string[];
   district: string;
   giBrand: string;
@@ -55,6 +56,14 @@ export default function Store() {
     },
   });
 
+  const { data: activeOffers = [] } = useQuery<any[]>({
+    queryKey: ["/api/stores/offers/active", id || ""],
+    enabled: !!id,
+    queryFn: async () => {
+      const res = await fetch(`/api/stores/${id}/offers/active`, { credentials: "include" });
+      return res.ok ? await res.json() : [];
+    },
+  });
  
 
   return (
@@ -135,7 +144,22 @@ export default function Store() {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 {products.map((p) => {
-                  const priceNum = Number(p.price);
+                  const base = Number(p.price);
+                  const candidates = (activeOffers || []).filter((o: any) => {
+                    const t = String(o.scopeType || 'products').toLowerCase();
+                    if (t === 'all') return true;
+                    if (t === 'products') return Array.isArray(o.scopeProducts) && o.scopeProducts.includes(p.id);
+                    if (t === 'categories') return Array.isArray(o.scopeCategories) && o.scopeCategories.includes(String(p.category));
+                    return false;
+                  });
+                  let priceNum = base;
+                  let badgeText: string | undefined = undefined;
+                  for (const o of candidates) {
+                    const dv = Number(o.discountValue);
+                    const dt = String(o.discountType || 'percentage').toLowerCase();
+                    const cand = dt === 'fixed' ? Math.max(0, base - dv) : Math.max(0, base * (1 - dv / 100));
+                    if (cand < priceNum) { priceNum = cand; badgeText = o.badgeText || 'Offer'; }
+                  }
                   return (
                   <ProductCard
                     key={p.id}
@@ -143,6 +167,8 @@ export default function Store() {
                     title={p.title}
                     description={p.description || undefined}
                     price={priceNum}
+                    originalPrice={priceNum < base ? base : undefined}
+                    badgeText={badgeText}
                     image={(p.images && p.images[0]) || "/attached_assets/generated_images/Handmade_khussa_footwear_product_06baa0d0.png"}
                     district={p.district}
                     giBrand={p.giBrand}

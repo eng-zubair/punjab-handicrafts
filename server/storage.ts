@@ -52,6 +52,9 @@ import {
   type ProductGroupMember,
   type Review,
   type InsertReview,
+  offers,
+  type Offer,
+  type InsertOffer,
   type InsertTrainingCenter,
   type TrainingCenter,
   type InsertTrainingProgram,
@@ -139,6 +142,14 @@ export interface IStorage {
   addProductToGroup(groupId: string, productId: string, position?: number): Promise<ProductGroupMember>;
   removeProductFromGroup(groupId: string, productId: string): Promise<void>;
   getProductGroupMembers(groupId: string): Promise<ProductGroupMember[]>;
+
+  // Offer operations
+  createOffer(offer: InsertOffer): Promise<Offer>;
+  getOffersByStore(storeId: string): Promise<Offer[]>;
+  getActiveOffersByStore(storeId: string, now?: Date): Promise<Offer[]>;
+  getOffer(id: string): Promise<Offer | undefined>;
+  updateOffer(id: string, updates: Partial<InsertOffer>): Promise<Offer | undefined>;
+  deleteOffer(id: string): Promise<void>;
 
   // Order operations
   createOrder(order: InsertOrder): Promise<Order>;
@@ -575,6 +586,52 @@ export class DatabaseStorage implements IStorage {
       .from(productGroupMembers)
       .where(eq(productGroupMembers.groupId, groupId))
       .orderBy(asc(productGroupMembers.position));
+  }
+
+  async createOffer(offer: InsertOffer): Promise<Offer> {
+    const [row] = await db.insert(offers).values(offer).returning();
+    return row;
+  }
+
+  async getOffersByStore(storeId: string): Promise<Offer[]> {
+    return await db
+      .select()
+      .from(offers)
+      .where(eq(offers.storeId, storeId))
+      .orderBy(desc(offers.startAt));
+  }
+
+  async getActiveOffersByStore(storeId: string, now: Date = new Date()): Promise<Offer[]> {
+    return await db
+      .select()
+      .from(offers)
+      .where(
+        and(
+          eq(offers.storeId, storeId),
+          eq(offers.isActive, true),
+          lte(offers.startAt, now as any),
+          gte(offers.endAt, now as any),
+        )
+      )
+      .orderBy(desc(offers.startAt));
+  }
+
+  async getOffer(id: string): Promise<Offer | undefined> {
+    const [row] = await db.select().from(offers).where(eq(offers.id, id));
+    return row;
+  }
+
+  async updateOffer(id: string, updates: Partial<InsertOffer>): Promise<Offer | undefined> {
+    const [row] = await db
+      .update(offers)
+      .set({ ...updates, updatedAt: new Date() as any })
+      .where(eq(offers.id, id))
+      .returning();
+    return row;
+  }
+
+  async deleteOffer(id: string): Promise<void> {
+    await db.delete(offers).where(eq(offers.id, id));
   }
 
  

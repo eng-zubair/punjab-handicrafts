@@ -22,6 +22,7 @@ import {
   insertMessageSchema,
   insertPayoutSchema,
   insertProductGroupSchema,
+  insertOfferSchema,
   insertTrainingCenterSchema,
   insertTrainingProgramSchema,
   insertTraineeApplicationSchema,
@@ -1320,6 +1321,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get('/api/stores/:id/offers/active', async (req, res) => {
+    try {
+      const storeId = req.params.id as string;
+      const list = await storage.getActiveOffersByStore(storeId);
+      res.json(list);
+    } catch (error) {
+      console.error("Error fetching active offers:", error);
+      res.status(500).json({ message: "Failed to fetch offers" });
+    }
+  });
+
   app.get('/api/stores/:id/products', async (req: any, res) => {
     try {
       const storeId = req.params.id as string;
@@ -1621,11 +1633,118 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/vendor/stores', isAuthenticated, isVendor, async (req: any, res) => {
     try {
-      const stores = await storage.getStoresByVendor(req.userId);
-      res.json(stores);
+      const vendorStores = await storage.getStoresByVendor(req.userId);
+      res.json(vendorStores);
     } catch (error) {
       console.error("Error fetching vendor stores:", error);
-      res.status(500).json({ message: "Failed to fetch stores" });
+      res.status(500).json({ message: "Failed to fetch vendor stores" });
+    }
+  });
+
+  app.get('/api/vendor/offers', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const { storeId, page = 1, pageSize = 24 } = req.query as any;
+      if (!storeId) {
+        return res.status(400).json({ message: "storeId required" });
+      }
+      const store = await storage.getStore(String(storeId));
+      if (!store) {
+        return res.status(404).json({ message: "Store not found" });
+      }
+      if (store.vendorId !== req.userId && req.userRole !== "admin") {
+        return res.status(403).json({ message: "Not authorized" });
+      }
+      const list = await storage.getOffersByStore(String(storeId));
+      const p = Math.max(1, Number(page) || 1);
+      const ps = Math.max(1, Math.min(100, Number(pageSize) || 24));
+      const start = (p - 1) * ps;
+      const slice = list.slice(start, start + ps);
+      res.json({ offers: slice, total: list.length });
+    } catch (error) {
+      console.error("Error fetching offers:", error);
+      res.status(500).json({ message: "Failed to fetch offers" });
+    }
+  });
+
+  app.post('/api/vendor/offers', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const payload = req.body || {};
+      const storeId = String(payload.storeId || '');
+      if (!storeId) return res.status(400).json({ message: "storeId required" });
+      const store = await storage.getStore(storeId);
+      if (!store) return res.status(404).json({ message: "Store not found" });
+      if (store.vendorId !== req.userId && req.userRole !== "admin") {
+        return res.status(403).json({ message: "Not authorized to create offers for this store" });
+      }
+      const startAt = payload.startAt ? new Date(payload.startAt) : null;
+      const endAt = payload.endAt ? new Date(payload.endAt) : null;
+      if (!startAt || !endAt || isNaN(startAt.getTime()) || isNaN(endAt.getTime())) {
+        return res.status(400).json({ message: "Invalid start/end times" });
+      }
+      if (startAt > endAt) {
+        return res.status(400).json({ message: "startAt must be before endAt" });
+      }
+      const validated = insertOfferSchema.parse({
+        ...payload,
+        scopeProducts: Array.isArray(payload.scopeProducts) ? payload.scopeProducts : undefined,
+        scopeCategories: Array.isArray(payload.scopeCategories) ? payload.scopeCategories : undefined,
+        scopeVariants: Array.isArray(payload.scopeVariants) ? payload.scopeVariants : undefined,
+      });
+      const created = await storage.createOffer(validated);
+      res.status(201).json(created);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid offer data", errors: error.errors });
+      }
+      console.error("Error creating offer:", error);
+      res.status(500).json({ message: "Failed to create offer" });
+    }
+  });
+
+  app.patch('/api/vendor/offers/:id', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const id = req.params.id;
+      const existing = await storage.getOffer(id);
+      if (!existing) return res.status(404).json({ message: "Offer not found" });
+      const store = await storage.getStore(existing.storeId);
+      if (!store) return res.status(404).json({ message: "Store not found" });
+      if (store.vendorId !== req.userId && req.userRole !== "admin") {
+        return res.status(403).json({ message: "Not authorized" });
+      }
+      const updates = req.body || {};
+      if (updates.startAt && updates.endAt) {
+        const startAt = new Date(updates.startAt);
+        const endAt = new Date(updates.endAt);
+        if (isNaN(startAt.getTime()) || isNaN(endAt.getTime()) || startAt > endAt) {
+          return res.status(400).json({ message: "Invalid start/end times" });
+        }
+      }
+      if (updates.scopeProducts && !Array.isArray(updates.scopeProducts)) updates.scopeProducts = undefined;
+      if (updates.scopeCategories && !Array.isArray(updates.scopeCategories)) updates.scopeCategories = undefined;
+      if (updates.scopeVariants && !Array.isArray(updates.scopeVariants)) updates.scopeVariants = undefined;
+      const updated = await storage.updateOffer(id, updates);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating offer:", error);
+      res.status(500).json({ message: "Failed to update offer" });
+    }
+  });
+
+  app.delete('/api/vendor/offers/:id', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const id = req.params.id;
+      const existing = await storage.getOffer(id);
+      if (!existing) return res.status(404).json({ message: "Offer not found" });
+      const store = await storage.getStore(existing.storeId);
+      if (!store) return res.status(404).json({ message: "Store not found" });
+      if (store.vendorId !== req.userId && req.userRole !== "admin") {
+        return res.status(403).json({ message: "Not authorized" });
+      }
+      await storage.deleteOffer(id);
+      res.json({ deleted: id });
+    } catch (error) {
+      console.error("Error deleting offer:", error);
+      res.status(500).json({ message: "Failed to delete offer" });
     }
   });
 
@@ -2181,7 +2300,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         const base = variantRow ? parseFloat(String(variantRow.price)) : parseFloat(String(product.price));
-        const effectivePrice = Number(base.toFixed(2));
+        let effectivePrice = Number(base.toFixed(2));
+        try {
+          const activeOffers = await storage.getActiveOffersByStore(product.storeId);
+          if (activeOffers && activeOffers.length > 0) {
+            const sku = item.variantSku || (variantRow ? String(variantRow.sku) : null);
+            const candidates = activeOffers.filter((o: any) => {
+              const t = String(o.scopeType || 'products').toLowerCase();
+              if (t === 'all') return true;
+              if (t === 'products') return Array.isArray(o.scopeProducts) && o.scopeProducts.includes(item.productId);
+              if (t === 'categories') return Array.isArray(o.scopeCategories) && o.scopeCategories.includes(String(product.category));
+              if (t === 'variants') return sku != null && Array.isArray(o.scopeVariants) && o.scopeVariants.includes(String(sku));
+              return false;
+            });
+            let best = effectivePrice;
+            for (const o of candidates) {
+              const dv = parseFloat(String(o.discountValue));
+              const dt = String(o.discountType || 'percentage').toLowerCase();
+              const cand = dt === 'fixed' ? Math.max(0, base - dv) : Math.max(0, base * (1 - dv / 100));
+              if (cand < best) best = cand;
+            }
+            effectivePrice = Number(best.toFixed(2));
+          }
+        } catch { }
         log(`Item pricing: product=${item.productId} qty=${item.quantity} base=${base} effective=${effectivePrice}`);
 
         totalComputed += effectivePrice * item.quantity;

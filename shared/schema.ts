@@ -224,6 +224,33 @@ export const productGroupMembers = pgTable("product_group_members", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// Discount Offers managed by Vendors
+export const offers = pgTable(
+  "offers",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    storeId: varchar("store_id").notNull().references(() => stores.id),
+    name: text("name").notNull(),
+    description: text("description"),
+    discountType: text("discount_type").notNull(), // percentage | fixed
+    discountValue: decimal("discount_value", { precision: 10, scale: 2 }).notNull(),
+    startAt: timestamp("start_at").notNull(),
+    endAt: timestamp("end_at").notNull(),
+    scopeType: text("scope_type").notNull().default("products"), // products | categories | variants | all
+    scopeProducts: text("scope_products").array(),
+    scopeCategories: text("scope_categories").array(),
+    scopeVariants: text("scope_variants").array(),
+    isActive: boolean("is_active").notNull().default(true),
+    badgeText: text("badge_text"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("IDX_offer_store").on(table.storeId),
+    index("IDX_offer_time").on(table.startAt, table.endAt),
+  ]
+);
+
 
 export const reviews = pgTable("reviews", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -387,6 +414,11 @@ export const insertProductGroupMemberSchema = createInsertSchema(productGroupMem
   createdAt: true,
 });
 
+export const insertOfferSchema = createInsertSchema(offers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
 
 export const insertReviewSchema = createInsertSchema(reviews).omit({
   id: true,
@@ -454,6 +486,9 @@ export type ProductGroup = typeof productGroups.$inferSelect;
 
 export type InsertProductGroupMember = z.infer<typeof insertProductGroupMemberSchema>;
 export type ProductGroupMember = typeof productGroupMembers.$inferSelect;
+
+export type InsertOffer = z.infer<typeof insertOfferSchema>;
+export type Offer = typeof offers.$inferSelect;
 
 
 export type InsertReview = z.infer<typeof insertReviewSchema>;
