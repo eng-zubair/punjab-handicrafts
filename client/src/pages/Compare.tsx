@@ -36,11 +36,47 @@ export default function Compare() {
     .map((id) => productsById[id])
     .filter((p): p is Product => !!p);
 
+  const storeIds = Array.from(new Set(resolvedProducts.map((p) => p.storeId).filter(Boolean)));
+  const offerQueries = useQueries({
+    queries: storeIds.map((sid) => ({
+      queryKey: [`/api/stores/${sid}/offers/active`],
+      enabled: !!sid,
+    })),
+  });
+  const offersByStoreId: Record<string, any[] | undefined> = {};
+  storeIds.forEach((sid, idx) => {
+    offersByStoreId[sid] = (offerQueries[idx]?.data as any[] | undefined) || undefined;
+  });
+
   const rows = [
     {
       id: "price",
       label: "Price",
-      getValue: (p: Product | undefined) => (p ? formatPrice(Number(p.price)) : "—"),
+      getValue: (p: Product | undefined) => {
+        if (!p) return "—";
+        const base = Number(p.price);
+        const list = offersByStoreId[p.storeId] || [];
+        let priceNum = base;
+        if (list && list.length > 0) {
+          const candidates = list.filter((o: any) => {
+            const t = String(o.scopeType || "products").toLowerCase();
+            if (t === "all") return true;
+            if (t === "products") return Array.isArray(o.scopeProducts) && o.scopeProducts.includes(p.id);
+            if (t === "categories") return Array.isArray(o.scopeCategories) && o.scopeCategories.includes(String((p as any).category));
+            return false;
+          });
+          for (const o of candidates) {
+            const dv = Number(o.discountValue);
+            const dt = String(o.discountType || "percentage").toLowerCase();
+            const cand = dt === "fixed" ? Math.max(0, base - dv) : Math.max(0, base * (1 - dv / 100));
+            if (cand < priceNum) priceNum = cand;
+          }
+        }
+        if (priceNum < base) {
+          return `${formatPrice(priceNum)} (was ${formatPrice(base)})`;
+        }
+        return formatPrice(base);
+      },
     },
     {
       id: "category",
@@ -216,15 +252,48 @@ export default function Compare() {
                               </div>
                             )}
                           </div>
-                          <div className="space-y-1">
-                            <p className="font-semibold text-sm line-clamp-2">{product.title}</p>
-                            <p className="text-sm text-primary font-bold">
-                              {formatPrice(Number(product.price))}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {product.giBrand} • {product.district}
-                            </p>
-                          </div>
+                            <div className="space-y-1">
+                              <p className="font-semibold text-sm line-clamp-2">{product.title}</p>
+                              {(() => {
+                                const base = Number(product.price);
+                                const list = offersByStoreId[product.storeId] || [];
+                                let priceNum = base;
+                                let hasDiscount = false;
+                                if (list && list.length > 0) {
+                                  const candidates = list.filter((o: any) => {
+                                    const t = String(o.scopeType || "products").toLowerCase();
+                                    if (t === "all") return true;
+                                    if (t === "products") return Array.isArray(o.scopeProducts) && o.scopeProducts.includes(product.id);
+                                    if (t === "categories") return Array.isArray(o.scopeCategories) && o.scopeCategories.includes(String((product as any).category));
+                                    return false;
+                                  });
+                                  for (const o of candidates) {
+                                    const dv = Number(o.discountValue);
+                                    const dt = String(o.discountType || "percentage").toLowerCase();
+                                    const cand = dt === "fixed" ? Math.max(0, base - dv) : Math.max(0, base * (1 - dv / 100));
+                                    if (cand < priceNum) {
+                                      priceNum = cand;
+                                      hasDiscount = true;
+                                    }
+                                  }
+                                }
+                                return (
+                                  <p className="text-sm text-primary font-bold">
+                                    {hasDiscount ? (
+                                      <>
+                                        <span className="line-through mr-1 text-muted-foreground">{formatPrice(base)}</span>
+                                        <span>{formatPrice(priceNum)}</span>
+                                      </>
+                                    ) : (
+                                      <span>{formatPrice(base)}</span>
+                                    )}
+                                  </p>
+                                );
+                              })()}
+                              <p className="text-xs text-muted-foreground">
+                                {product.giBrand} • {product.district}
+                              </p>
+                            </div>
                           <div className="mt-auto flex items-center justify-between gap-2">
                             <Button asChild variant="outline" size="sm">
                               <Link href={`/products/${product.id}`}>
@@ -345,4 +414,3 @@ export default function Compare() {
     </div>
   );
 }
-

@@ -485,6 +485,7 @@ export default function ProductForm({
                         id="title"
                         placeholder="Handwoven Basket"
                         data-testid="input-product-title"
+                        style={{ pointerEvents: "auto" }}
                         {...field}
                       />
                     </FormControl>
@@ -505,6 +506,7 @@ export default function ProductForm({
                         placeholder="Describe your product..."
                         className="min-h-24"
                         data-testid="input-product-description"
+                        style={{ pointerEvents: "auto" }}
                         {...field}
                       />
                     </FormControl>
@@ -528,6 +530,7 @@ export default function ProductForm({
                           <SelectTrigger
                             aria-label="Select district"
                             data-testid="select-product-district"
+                            style={{ pointerEvents: "auto" }}
                           >
                             <SelectValue placeholder="Select district" />
                           </SelectTrigger>
@@ -559,6 +562,7 @@ export default function ProductForm({
                           <SelectTrigger
                             aria-label="Select GI brand"
                             data-testid="select-product-gi-brand"
+                            style={{ pointerEvents: "auto" }}
                           >
                             <SelectValue placeholder="Select GI brand" />
                           </SelectTrigger>

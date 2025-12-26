@@ -3,9 +3,11 @@ import { VendorDashboard } from "./VendorDashboard";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { CheckCircle2, Circle, Store as StoreIcon, Package, ShoppingCart, DollarSign, AlertCircle, Clock, XCircle } from "lucide-react";
+import { CheckCircle2, Circle, Store as StoreIcon, Package, ShoppingCart, DollarSign, AlertCircle, Clock, XCircle, Tag } from "lucide-react";
 import { Link } from "wouter";
 import { formatPrice } from "@/lib/utils/price";
+import { apiRequest } from "@/lib/queryClient";
+import type { Offer } from "@shared/schema";
 
 type Store = {
   id: string;
@@ -64,6 +66,26 @@ export default function VendorOverview() {
       return res.json();
     }
   });
+  const { data: vendorOffersData, isLoading: offersLoading } = useQuery<{ offers: Offer[]; total: number }>({
+    queryKey: ['/api/vendor/offers', store?.id || ''],
+    enabled: !!store?.id,
+    queryFn: async () => {
+      const res = await apiRequest('GET', `/api/vendor/offers?storeId=${store!.id}`);
+      return res.json();
+    },
+  });
+  const vendorOffers = vendorOffersData?.offers || [];
+  const now = new Date();
+  const activeOffers = vendorOffers.filter(o => !!o.isActive && new Date(String(o.startAt)) <= now && now <= new Date(String(o.endAt))).length;
+  const upcomingOffers = vendorOffers.filter(o => !!o.isActive && now < new Date(String(o.startAt))).length;
+  const expiredOffers = vendorOffers.filter(o => now > new Date(String(o.endAt))).length;
+  const typeCounts = vendorOffers.reduce((acc: Record<string, number>, o) => {
+    const t = String(o.discountType || '').toLowerCase();
+    acc[t] = (acc[t] || 0) + 1;
+    return acc;
+  }, {});
+  const percentageCount = typeCounts['percentage'] || 0;
+  const fixedCount = typeCounts['fixed'] || 0;
   const pendingOrders = orders.filter(o => o.status === 'pending').length;
   const canceledOrders = orders.filter(o => o.status === 'cancelled').length;
   const deliveredOrders = orders.filter(o => o.status === 'delivered').length;
@@ -289,6 +311,38 @@ export default function VendorOverview() {
               <p className="text-xs text-muted-foreground">
                 {totalEarnings === 0 ? 'No sales yet' : 'Your earnings'}
               </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Promotions</CardTitle>
+              <Tag className="w-4 h-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <span>Active</span>
+                  <span className="font-semibold" data-testid="metric-promotions-active">{activeOffers}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Upcoming</span>
+                  <span className="font-semibold" data-testid="metric-promotions-upcoming">{upcomingOffers}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Expired</span>
+                  <span className="font-semibold" data-testid="metric-promotions-expired">{expiredOffers}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Percentage</span>
+                  <span className="font-semibold" data-testid="metric-promotions-percentage">{percentageCount}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Fixed</span>
+                  <span className="font-semibold" data-testid="metric-promotions-fixed">{fixedCount}</span>
+                </div>
+              </div>
+              {offersLoading ? <p className="text-xs text-muted-foreground mt-2">Loading promotions...</p> : null}
             </CardContent>
           </Card>
 

@@ -743,7 +743,24 @@ export default function ProductDetail() {
                             size="icon"
                             aria-label="Reset zoom"
                             data-testid="button-zoom-reset"
-                            onClick={() => resetTransform()}
+                            onClick={() => {
+                              resetTransform();
+                              try {
+                                const s = zoomRef.current?.instance.transformState;
+                                const scale = s?.scale ?? 1;
+                                const finalScale = 1;
+                                const apply = () => setTransform(0, 0, finalScale);
+                                if (scale !== finalScale || (s?.positionX ?? 0) !== 0 || (s?.positionY ?? 0) !== 0) {
+                                  if (typeof requestAnimationFrame === "function") {
+                                    requestAnimationFrame(apply);
+                                  } else {
+                                    setTimeout(apply, 0);
+                                  }
+                                } else {
+                                  apply();
+                                }
+                              } catch {}
+                            }}
                           >
                             <RotateCcw className="w-4 h-4" />
                           </Button>

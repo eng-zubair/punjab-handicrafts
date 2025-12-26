@@ -7,7 +7,7 @@ import VendorCard from "@/components/VendorCard";
 import Footer from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, Loader2, Star } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import { Link } from "wouter";
 import type { Category, Product, Store, ProductCategory } from "@shared/schema";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
@@ -104,20 +104,68 @@ export default function Home() {
     craftCount: productsResponse?.products.filter(p => p.giBrand === cat.giBrand).length || 0,
   })) || [];
 
-  const featuredProducts = productsResponse?.products.slice(0, 4).map(product => ({
-    id: product.id,
-    title: product.title,
-    description: product.description || undefined,
-    price: Number(product.price),
-    image: imagePathMap[product.images[0]] || product.images[0] || multanImage,
-    district: product.district,
-    giBrand: product.giBrand,
-    vendorName: storesData?.find(s => s.id === product.storeId)?.name || "Artisan Vendor",
-    storeId: product.storeId,
-    stock: product.stock,
-    ratingAverage: (product as any).ratingAverage || 0,
-    ratingCount: (product as any).ratingCount || 0,
-  })) || [];
+  const storeIds = useMemo(() => {
+    const set = new Set<string>();
+    (productsResponse?.products || []).slice(0, 4).forEach(p => { if (p?.storeId) set.add(p.storeId); });
+    (productsPage?.products || []).forEach(p => { if (p?.storeId) set.add(p.storeId); });
+    return Array.from(set);
+  }, [productsResponse, productsPage]);
+
+  const offersQueries = useQueries({
+    queries: storeIds.map((sid) => ({
+      queryKey: [`/api/stores/${sid}/offers/active`],
+      enabled: !!sid,
+    })),
+  });
+
+  const offersByStoreId: Record<string, any[] | undefined> = useMemo(() => {
+    const map: Record<string, any[] | undefined> = {};
+    storeIds.forEach((sid, idx) => {
+      map[sid] = (offersQueries[idx]?.data as any[] | undefined) || undefined;
+    });
+    return map;
+  }, [storeIds, offersQueries]);
+
+  const featuredProducts = productsResponse?.products.slice(0, 4).map(product => {
+    const base = Number(product.price);
+    const list = offersByStoreId[product.storeId] || [];
+    let priceNum = base;
+    let badgeText: string | undefined = undefined;
+    if (list && list.length > 0) {
+      const candidates = list.filter((o: any) => {
+        const t = String(o.scopeType || 'products').toLowerCase();
+        if (t === 'all') return true;
+        if (t === 'products') return Array.isArray(o.scopeProducts) && o.scopeProducts.includes(product.id);
+        if (t === 'categories') return Array.isArray(o.scopeCategories) && o.scopeCategories.includes(String((product as any).category));
+        return false;
+      });
+      for (const o of candidates) {
+        const dv = Number(o.discountValue);
+        const dt = String(o.discountType || 'percentage').toLowerCase();
+        const cand = dt === 'fixed' ? Math.max(0, base - dv) : Math.max(0, base * (1 - dv / 100));
+        if (cand < priceNum) {
+          priceNum = cand;
+          badgeText = o.badgeText || (dt === 'percentage' ? `${dv}% off` : `PKR ${dv} off`);
+        }
+      }
+    }
+    return {
+      id: product.id,
+      title: product.title,
+      description: product.description || undefined,
+      price: priceNum,
+      originalPrice: priceNum < base ? base : undefined,
+      badgeText,
+      image: imagePathMap[product.images[0]] || product.images[0] || multanImage,
+      district: product.district,
+      giBrand: product.giBrand,
+      vendorName: storesData?.find(s => s.id === product.storeId)?.name || "Artisan Vendor",
+      storeId: product.storeId,
+      stock: product.stock,
+      ratingAverage: (product as any).ratingAverage || 0,
+      ratingCount: (product as any).ratingCount || 0,
+    };
+  }) || [];
 
   const topVendors = storesData?.slice(0, 2).map(store => ({
     id: store.id,
@@ -374,23 +422,49 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-                  {(productsPage?.products || []).map((product) => (
-                    <ProductCard
-                      key={product.id}
-                      id={product.id}
-                      title={product.title}
-                      description={product.description || undefined}
-                      price={Number(product.price)}
-                      image={imagePathMap[product.images[0]] || product.images[0] || multanImage}
-                      district={product.district}
-                      giBrand={product.giBrand}
-                      vendorName={storesData?.find(s => s.id === product.storeId)?.name || "Artisan Vendor"}
-                      storeId={product.storeId}
-                      stock={product.stock}
-                      ratingAverage={(product as any).ratingAverage || 0}
-                      ratingCount={(product as any).ratingCount || 0}
-                    />
-                  ))}
+                  {(productsPage?.products || []).map((product) => {
+                    const base = Number(product.price);
+                    const list = offersByStoreId[product.storeId] || [];
+                    let priceNum = base;
+                    let badgeText: string | undefined = undefined;
+                    if (list && list.length > 0) {
+                      const candidates = list.filter((o: any) => {
+                        const t = String(o.scopeType || 'products').toLowerCase();
+                        if (t === 'all') return true;
+                        if (t === 'products') return Array.isArray(o.scopeProducts) && o.scopeProducts.includes(product.id);
+                        if (t === 'categories') return Array.isArray(o.scopeCategories) && o.scopeCategories.includes(String((product as any).category));
+                        return false;
+                      });
+                      for (const o of candidates) {
+                        const dv = Number(o.discountValue);
+                        const dt = String(o.discountType || 'percentage').toLowerCase();
+                        const cand = dt === 'fixed' ? Math.max(0, base - dv) : Math.max(0, base * (1 - dv / 100));
+                        if (cand < priceNum) {
+                          priceNum = cand;
+                          badgeText = o.badgeText || (dt === 'percentage' ? `${dv}% off` : `PKR ${dv} off`);
+                        }
+                      }
+                    }
+                    return (
+                      <ProductCard
+                        key={product.id}
+                        id={product.id}
+                        title={product.title}
+                        description={product.description || undefined}
+                        price={priceNum}
+                        originalPrice={priceNum < base ? base : undefined}
+                        badgeText={badgeText}
+                        image={imagePathMap[product.images[0]] || product.images[0] || multanImage}
+                        district={product.district}
+                        giBrand={product.giBrand}
+                        vendorName={storesData?.find(s => s.id === product.storeId)?.name || "Artisan Vendor"}
+                        storeId={product.storeId}
+                        stock={product.stock}
+                        ratingAverage={(product as any).ratingAverage || 0}
+                        ratingCount={(product as any).ratingCount || 0}
+                      />
+                    );
+                  })}
                 </div>
               )}
               <div className="mt-6">

@@ -218,6 +218,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   console.log('Registering routes...');
   try {
     await ensureVariantSchema();
+    await ensureOfferSchema();
+    await ensureWishlistSchema();
   } catch { }
 
   app.get('/api/ping-test', (req, res) => {
@@ -375,6 +377,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
       productCategoriesSchemaEnsured = true;
     } catch (e) {
       console.error('ensureProductCategoriesSchema error:', e);
+    }
+  }
+
+  let offerSchemaEnsured = false;
+  async function ensureOfferSchema() {
+    if (offerSchemaEnsured) return;
+    const stmts = [
+      `CREATE TABLE IF NOT EXISTS offers (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        store_id varchar NOT NULL REFERENCES stores(id),
+        name text NOT NULL,
+        description text,
+        discount_type text NOT NULL,
+        discount_value numeric(10,2) NOT NULL,
+        start_at timestamp NOT NULL,
+        end_at timestamp NOT NULL,
+        scope_type text NOT NULL DEFAULT 'products',
+        scope_products text[],
+        scope_categories text[],
+        scope_variants text[],
+        is_active boolean NOT NULL DEFAULT true,
+        badge_text text,
+        created_at timestamp DEFAULT now() NOT NULL,
+        updated_at timestamp DEFAULT now() NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS IDX_offer_store ON offers(store_id)`,
+      `CREATE INDEX IF NOT EXISTS IDX_offer_time ON offers(start_at, end_at)`
+    ];
+    try {
+      for (const s of stmts) {
+        await pool.query(s);
+      }
+      offerSchemaEnsured = true;
+    } catch (e) {
+      console.error('ensureOfferSchema error:', e);
+    }
+  }
+
+  let wishlistSchemaEnsured = false;
+  async function ensureWishlistSchema() {
+    if (wishlistSchemaEnsured) return;
+    const stmts = [
+      `CREATE TABLE IF NOT EXISTS wishlist_items (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id varchar NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        product_id varchar NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        created_at timestamp DEFAULT now() NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS IDX_wishlist_unique ON wishlist_items(user_id, product_id)`
+    ];
+    try {
+      for (const s of stmts) {
+        await pool.query(s);
+      }
+      wishlistSchemaEnsured = true;
+    } catch (e) {
+      console.error('ensureWishlistSchema error:', e);
     }
   }
 
@@ -1087,6 +1146,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/wishlist', isAuthenticated, async (req: any, res) => {
     try {
+      await ensureWishlistSchema();
       const userId = req.userId;
       const items = await storage.getWishlistItemsByUser(userId);
       res.json(items.map(i => i.productId));
@@ -1098,6 +1158,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/wishlist', isAuthenticated, async (req: any, res) => {
     try {
+      await ensureWishlistSchema();
       const userId = req.userId;
       const { productId } = req.body as { productId: string };
       if (!productId) return res.status(400).json({ message: "productId required" });
@@ -1111,6 +1172,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete('/api/wishlist/:productId', isAuthenticated, async (req: any, res) => {
     try {
+      await ensureWishlistSchema();
       const userId = req.userId;
       const productId = req.params.productId as string;
       await storage.removeWishlistItem(userId, productId);
@@ -1123,10 +1185,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/wishlist/sync', isAuthenticated, async (req: any, res) => {
     try {
+      await ensureWishlistSchema();
       const userId = req.userId;
       const { productIds } = req.body as { productIds: string[] };
-      const ids = Array.isArray(productIds) ? productIds : [];
-      for (const pid of ids) {
+      const ids = Array.isArray(productIds) ? productIds.filter(Boolean) : [];
+      let validIds: string[] = [];
+      if (ids.length > 0) {
+        try {
+          const rows = await db.select({ id: products.id }).from(products).where(inArray(products.id, ids));
+          validIds = rows.map(r => String(r.id));
+        } catch {
+          validIds = [];
+        }
+      }
+      for (const pid of validIds) {
         if (!pid) continue;
         await storage.addWishlistItem(userId, pid);
       }
@@ -1140,6 +1212,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/wishlist/products', isAuthenticated, async (req: any, res) => {
     try {
+      await ensureWishlistSchema();
       const userId = req.userId;
       const list = await storage.getWishlistProducts(userId);
       const productIds = list.map(p => p.id);
@@ -1323,6 +1396,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/stores/:id/offers/active', async (req, res) => {
     try {
+      await ensureOfferSchema();
       const storeId = req.params.id as string;
       const list = await storage.getActiveOffersByStore(storeId);
       res.json(list);

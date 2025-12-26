@@ -72,6 +72,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import type { Offer } from "@shared/schema";
 
 
 // Legacy StableFocusInput/StableFocusTextarea removed; new form lives in '@/components/vendor/ProductForm'
@@ -143,6 +144,7 @@ export default function VendorProducts() {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [addOfferDialogOpen, setAddOfferDialogOpen] = useState(false);
 
 
 
@@ -180,6 +182,95 @@ export default function VendorProducts() {
   const filteredProducts = vendorProducts.filter(p => {
     if (activeTab === "all") return true;
     return p.status === activeTab;
+  });
+
+  const { data: offersData } = useQuery<{ offers: Offer[]; total: number }>({
+    queryKey: ['/api/vendor/offers', { storeId: store?.id, page: 1, pageSize: 100 }],
+    enabled: !!store?.id,
+  });
+  const offers = offersData?.offers || [];
+
+  const offerFormSchema = z.object({
+    name: z.string().min(3),
+    description: z.string().optional(),
+    discountType: z.enum(['percentage', 'fixed']),
+    discountValue: z.string().min(1),
+    startAt: z.string().min(1),
+    endAt: z.string().min(1),
+    scopeType: z.enum(['all', 'products', 'categories']),
+    scopeProducts: z.array(z.string()).optional(),
+    scopeCategories: z.array(z.string()).optional(),
+    isActive: z.boolean().default(true),
+    badgeText: z.string().optional(),
+  });
+  type OfferFormValues = z.infer<typeof offerFormSchema>;
+  const [offerScopeProducts, setOfferScopeProducts] = useState<string[]>([]);
+  const [offerScopeCategories, setOfferScopeCategories] = useState<string[]>([]);
+  const [offerDiscountType, setOfferDiscountType] = useState<'percentage' | 'fixed'>('percentage');
+  const [offerScopeType, setOfferScopeType] = useState<'all' | 'products' | 'categories'>('products');
+  const [offerActive, setOfferActive] = useState<boolean>(true);
+  const [offerName, setOfferName] = useState<string>("");
+  const [offerDescription, setOfferDescription] = useState<string>("");
+  const [offerValue, setOfferValue] = useState<string>("");
+  const [offerBadgeText, setOfferBadgeText] = useState<string>("");
+  const [offerStartAt, setOfferStartAt] = useState<string>("");
+  const [offerEndAt, setOfferEndAt] = useState<string>("");
+
+  const createOfferMutation = useMutation({
+    mutationFn: async (payload: OfferFormValues) => {
+      const data = {
+        ...payload,
+        storeId: store?.id,
+        discountValue: String(payload.discountValue),
+        scopeProducts: payload.scopeType === 'products' ? offerScopeProducts : undefined,
+        scopeCategories: payload.scopeType === 'categories' ? offerScopeCategories : undefined,
+      };
+      return apiRequest('POST', '/api/vendor/offers', data);
+    },
+    onSuccess: async () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/offers'] });
+      setAddOfferDialogOpen(false);
+      setOfferScopeProducts([]);
+      setOfferScopeCategories([]);
+      setOfferDiscountType('percentage');
+      setOfferScopeType('products');
+      setOfferActive(true);
+      setOfferName("");
+      setOfferDescription("");
+      setOfferValue("");
+      setOfferBadgeText("");
+      setOfferStartAt("");
+      setOfferEndAt("");
+      toast({ title: 'Offer created', description: 'Promotion has been created successfully' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const deleteOfferMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return apiRequest('DELETE', `/api/vendor/offers/${id}`, {});
+    },
+    onSuccess: async () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/offers'] });
+      toast({ title: 'Offer deleted', description: 'Promotion has been removed' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const toggleOfferActiveMutation = useMutation({
+    mutationFn: async ({ id, isActive }: { id: string; isActive: boolean }) => {
+      return apiRequest('PATCH', `/api/vendor/offers/${id}`, { isActive });
+    },
+    onSuccess: async () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/vendor/offers'] });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
   });
 
  
@@ -471,6 +562,10 @@ export default function VendorProducts() {
               <Layers className="w-4 h-4 mr-2" />
               Groups
             </TabsTrigger>
+            <TabsTrigger value="promotions" data-testid="tab-main-promotions">
+              <Tag className="w-4 h-4 mr-2" />
+              Promotions
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="products" className="mt-6">
@@ -618,8 +713,230 @@ export default function VendorProducts() {
                     </div>
                   </Card>
                 )}
-              </TabsContent>
-            </Tabs>
+          </TabsContent>
+          <TabsContent value="promotions" className="mt-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-xl font-semibold">Discounts & Promotions</h2>
+                <p className="text-muted-foreground">Create and manage your store offers</p>
+              </div>
+              <Dialog open={addOfferDialogOpen} onOpenChange={setAddOfferDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="default" data-testid="button-add-offer">
+                    <Plus className="w-4 h-4 mr-2" />
+                    Create Offer
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl">
+                  <DialogHeader>
+                    <DialogTitle>Create Offer</DialogTitle>
+                    <DialogDescription>Configure discount details and scope</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <FormLabel>Name</FormLabel>
+                        <Input value={offerName} onChange={(e) => setOfferName(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <FormLabel>Badge Text</FormLabel>
+                        <Input value={offerBadgeText} onChange={(e) => setOfferBadgeText(e.target.value)} />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <FormLabel>Description</FormLabel>
+                      <Textarea value={offerDescription} onChange={(e) => setOfferDescription(e.target.value)} />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <FormLabel>Type</FormLabel>
+                        <Select value={offerDiscountType} onValueChange={(v: any) => setOfferDiscountType(v)}>
+                          <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="percentage">Percentage</SelectItem>
+                            <SelectItem value="fixed">Fixed</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <FormLabel>Value</FormLabel>
+                        <Input value={offerValue} onChange={(e) => setOfferValue(e.target.value)} placeholder={offerDiscountType === 'percentage' ? 'e.g., 10' : 'e.g., 500'} />
+                      </div>
+                      <div className="space-y-2">
+                        <FormLabel>Active</FormLabel>
+                        <Switch checked={offerActive} onCheckedChange={setOfferActive} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <FormLabel>Start</FormLabel>
+                        <Input type="datetime-local" value={offerStartAt} onChange={(e) => setOfferStartAt(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <FormLabel>End</FormLabel>
+                        <Input type="datetime-local" value={offerEndAt} onChange={(e) => setOfferEndAt(e.target.value)} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <FormLabel>Scope</FormLabel>
+                        <Select value={offerScopeType} onValueChange={(v: any) => setOfferScopeType(v)}>
+                          <SelectTrigger><SelectValue placeholder="Select scope" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All</SelectItem>
+                            <SelectItem value="products">Products</SelectItem>
+                            <SelectItem value="categories">Categories</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {offerScopeType === 'products' && (
+                        <div className="md:col-span-2 space-y-2">
+                          <FormLabel>Products</FormLabel>
+                          <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto border rounded p-2">
+                            {vendorProducts.map((p) => (
+                              <label key={p.id} className="flex items-center gap-2 text-sm">
+                                <Checkbox
+                                  checked={offerScopeProducts.includes(p.id)}
+                                  onCheckedChange={(checked) => {
+                                    setOfferScopeProducts((prev) => {
+                                      const set = new Set(prev);
+                                      if (checked) set.add(p.id); else set.delete(p.id);
+                                      return Array.from(set);
+                                    });
+                                  }}
+                                />
+                                <span className="line-clamp-1">{p.title}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {offerScopeType === 'categories' && (
+                        <div className="md:col-span-2 space-y-2">
+                          <FormLabel>Categories</FormLabel>
+                          <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto border rounded p-2">
+                            {adminProductCategories.map((c) => (
+                              <label key={c.id} className="flex items-center gap-2 text-sm">
+                                <Checkbox
+                                  checked={offerScopeCategories.includes(c.name)}
+                                  onCheckedChange={(checked) => {
+                                    setOfferScopeCategories((prev) => {
+                                      const set = new Set(prev);
+                                      if (checked) set.add(c.name); else set.delete(c.name);
+                                      return Array.from(set);
+                                    });
+                                  }}
+                                />
+                                <span className="line-clamp-1">{c.name}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button
+                      onClick={() => {
+                        const payload: OfferFormValues = {
+                          name: offerName,
+                          description: offerDescription || undefined,
+                          discountType: offerDiscountType,
+                          discountValue: offerValue,
+                          startAt: offerStartAt,
+                          endAt: offerEndAt,
+                          scopeType: offerScopeType,
+                          scopeProducts: offerScopeType === 'products' ? offerScopeProducts : undefined,
+                          scopeCategories: offerScopeType === 'categories' ? offerScopeCategories : undefined,
+                          isActive: offerActive,
+                          badgeText: offerBadgeText || undefined,
+                        };
+                        createOfferMutation.mutate(payload);
+                      }}
+                      disabled={!offerName || !offerValue || !offerStartAt || !offerEndAt}
+                      data-testid="button-submit-offer"
+                    >
+                      Create Offer
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
+            <Card>
+              <div className="overflow-x-auto">
+                <Table className="min-w-[900px]">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Value</TableHead>
+                      <TableHead>Scope</TableHead>
+                      <TableHead>Window</TableHead>
+                      <TableHead>Active</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {offers.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={7}>
+                          <p className="text-sm text-muted-foreground">No offers yet</p>
+                        </TableCell>
+                      </TableRow>
+                    ) : offers.map((o) => {
+                      const t = String(o.discountType || '').toLowerCase();
+                      const val = t === 'fixed' ? `PKR ${Number(o.discountValue).toLocaleString()}` : `${Number(o.discountValue)}%`;
+                      const s = String(o.scopeType || '').toLowerCase();
+                      const scopeLabel =
+                        s === 'all'
+                          ? 'All'
+                          : s === 'products'
+                            ? `Products (${Array.isArray(o.scopeProducts) ? o.scopeProducts.length : 0})`
+                            : s === 'categories'
+                              ? `Categories (${Array.isArray(o.scopeCategories) ? o.scopeCategories.length : 0})`
+                              : s;
+                      const start = o.startAt ? new Date(o.startAt) : null;
+                      const end = o.endAt ? new Date(o.endAt) : null;
+                      const windowLabel = start && end ? `${start.toLocaleDateString()} – ${end.toLocaleDateString()}` : '';
+                      return (
+                        <TableRow key={o.id}>
+                          <TableCell>
+                            <div className="space-y-1">
+                              <p className="font-medium">{o.name}</p>
+                              {o.badgeText ? <Badge variant="secondary" className="text-xs">{o.badgeText}</Badge> : null}
+                            </div>
+                          </TableCell>
+                          <TableCell>{t}</TableCell>
+                          <TableCell>{val}</TableCell>
+                          <TableCell>{scopeLabel}</TableCell>
+                          <TableCell>{windowLabel}</TableCell>
+                          <TableCell>
+                            <Switch
+                              checked={!!o.isActive}
+                              onCheckedChange={(checked) => toggleOfferActiveMutation.mutate({ id: o.id, isActive: checked })}
+                            />
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => deleteOfferMutation.mutate(o.id)}
+                                data-testid={`button-delete-offer-${o.id}`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </Card>
+          </TabsContent>
+        </Tabs>
           </TabsContent>
 
           <TabsContent value="groups" className="mt-6">

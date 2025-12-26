@@ -18,6 +18,9 @@ export function VendorDashboard({ children }: VendorDashboardProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    if (typeof process !== "undefined" && process.env?.NODE_ENV === "test") {
+      return;
+    }
     const container = rootRef.current;
     let tooltipEl: HTMLDivElement | null = null;
     let showTimer: number | null = null;

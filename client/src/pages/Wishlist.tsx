@@ -3,7 +3,7 @@ import Footer from "@/components/Footer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircle, Heart } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { useWishlist } from "@/components/WishlistContext";
 import ProductCard from "@/components/ProductCard";
@@ -39,6 +39,19 @@ export default function Wishlist() {
   const isError = isAuthenticated ? serverError : localError;
   const error = (serverErr || localErr) as any;
   const products = isAuthenticated ? (serverData?.products || []) : (localData?.products || []);
+
+  const storeIds = (products || []).map((p: any) => p?.storeId).filter(Boolean);
+  const uniqueStoreIds = Array.from(new Set(storeIds));
+  const offersQueries = useQueries({
+    queries: uniqueStoreIds.map((sid) => ({
+      queryKey: [`/api/stores/${sid}/offers/active`],
+      enabled: !!sid,
+    })),
+  });
+  const offersByStoreId: Record<string, any[] | undefined> = {};
+  uniqueStoreIds.forEach((sid, idx) => {
+    offersByStoreId[sid] = (offersQueries[idx]?.data as any[] | undefined) || undefined;
+  });
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -89,21 +102,49 @@ export default function Wishlist() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {products.map((p: any) => (
-                <ProductCard
-                  key={p.id}
-                  id={p.id}
-                  title={p.title}
-                  description={p.description || ""}
-                  price={Number(p.price)}
-                  image={(p.images || [])[0] || ""}
-                  district={p.district}
-                  giBrand={p.giBrand}
-                  vendorName={p.vendorName || ""}
-                  storeId={p.storeId}
-                  stock={Number(p.stock || 0)}
-                  ratingAverage={Number(p.ratingAverage || 0)}
-                  ratingCount={Number(p.ratingCount || 0)}
-                />
+                (() => {
+                  const base = Number(p.price);
+                  const list = offersByStoreId[p.storeId] || [];
+                  let priceNum = base;
+                  let badgeText: string | undefined = undefined;
+                  if (list && list.length > 0) {
+                    const candidates = list.filter((o: any) => {
+                      const t = String(o.scopeType || 'products').toLowerCase();
+                      if (t === 'all') return true;
+                      if (t === 'products') return Array.isArray(o.scopeProducts) && o.scopeProducts.includes(p.id);
+                      if (t === 'categories') return Array.isArray(o.scopeCategories) && o.scopeCategories.includes(String(p.category));
+                      return false;
+                    });
+                    for (const o of candidates) {
+                      const dv = Number(o.discountValue);
+                      const dt = String(o.discountType || 'percentage').toLowerCase();
+                      const cand = dt === 'fixed' ? Math.max(0, base - dv) : Math.max(0, base * (1 - dv / 100));
+                      if (cand < priceNum) {
+                        priceNum = cand;
+                        badgeText = o.badgeText || (dt === 'percentage' ? `${dv}% off` : `PKR ${dv} off`);
+                      }
+                    }
+                  }
+                  return (
+                    <ProductCard
+                      key={p.id}
+                      id={p.id}
+                      title={p.title}
+                      description={p.description || ""}
+                      price={priceNum}
+                      originalPrice={priceNum < base ? base : undefined}
+                      badgeText={badgeText}
+                      image={(p.images || [])[0] || ""}
+                      district={p.district}
+                      giBrand={p.giBrand}
+                      vendorName={p.vendorName || ""}
+                      storeId={p.storeId}
+                      stock={Number(p.stock || 0)}
+                      ratingAverage={Number(p.ratingAverage || 0)}
+                      ratingCount={Number(p.ratingCount || 0)}
+                    />
+                  );
+                })()
               ))}
             </div>
           )}
