@@ -12,9 +12,14 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-export const pool = new Pool({ 
+const shouldUseSSL =
+  (process.env.DB_SSL && process.env.DB_SSL.toLowerCase() === 'true') ||
+  (process.env.PGSSLMODE && process.env.PGSSLMODE.toLowerCase() === 'require') ||
+  (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('sslmode=require'));
+
+export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: false // Disable SSL for local PostgreSQL
+  ssl: shouldUseSSL ? { rejectUnauthorized: false } : undefined
 });
 
 export const db = drizzle({ client: pool, schema });
