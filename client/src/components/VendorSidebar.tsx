@@ -10,7 +10,7 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, Package, ShoppingCart, Store, Settings, LogOut } from "lucide-react";
+import { LayoutDashboard, Package, ShoppingCart, Store, Settings, LogOut, Tag } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
@@ -33,6 +33,12 @@ const menuItems = [
     url: "/vendor/orders",
     icon: ShoppingCart,
     tip: "Track and manage customer orders",
+  },
+  {
+    title: "Promotions",
+    url: "/vendor/promotions",
+    icon: Tag,
+    tip: "Create and manage discounts and offers",
   },
   {
     title: "Store Settings",

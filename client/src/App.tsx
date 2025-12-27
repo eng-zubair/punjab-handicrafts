@@ -18,6 +18,7 @@ import VendorOverview from "@/pages/vendor/Overview";
 import VendorProducts from "@/pages/vendor/Products";
 import VendorOrders from "@/pages/vendor/Orders";
 import VendorStore from "@/pages/vendor/Store";
+import VendorPromotions from "@/pages/vendor/Promotions";
 import AdminOverview from "@/pages/admin/Overview";
 import AdminModeration from "@/pages/admin/Moderation";
 import AdminUsers from "@/pages/admin/Users";
@@ -171,6 +172,7 @@ function Router() {
       <Route path="/vendor/register" component={VendorRegister} />
       <Route path="/vendor/dashboard" component={VendorOverview} />
       <Route path="/vendor/products" component={VendorProducts} />
+      <Route path="/vendor/promotions" component={VendorPromotions} />
       <Route path="/vendor/orders" component={VendorOrders} />
       <Route path="/vendor/store" component={VendorStore} />
       {/* Training Module Routes */}
