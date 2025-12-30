@@ -459,6 +459,7 @@ export default function Header() {
               onClick={toggleTheme}
               data-testid="button-theme-toggle"
               aria-label="Toggle theme"
+              className="hidden sm:inline-flex"
             >
               {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </Button>
@@ -479,7 +480,7 @@ export default function Header() {
               </Button>
             </Link>
             <Link href="/compare">
-              <Button variant="ghost" size="icon" className="relative" data-testid="button-compare" aria-label="Product comparison">
+              <Button variant="ghost" size="icon" className="relative hidden sm:inline-flex" data-testid="button-compare" aria-label="Product comparison">
                 <ArrowLeftRight className="w-5 h-5" />
                 {compareCount > 0 && (
                   <Badge
@@ -495,7 +496,7 @@ export default function Header() {
               </Button>
             </Link>
             <Link href="/wishlist">
-              <Button variant="ghost" size="icon" className="relative" data-testid="button-wishlist" aria-label="Wishlist">
+              <Button variant="ghost" size="icon" className="relative hidden sm:inline-flex" data-testid="button-wishlist" aria-label="Wishlist">
                 <Heart className="w-5 h-5" />
                 {wishlistCount > 0 && (
                   <Badge
@@ -597,9 +598,27 @@ export default function Header() {
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <Button variant="default" size="sm" onClick={handleLoginClick} data-testid="button-login">
-                Login
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleLoginClick}
+                  className="md:hidden"
+                  aria-label="Login"
+                  data-testid="button-login-mobile"
+                >
+                  <User className="w-5 h-5" />
+                </Button>
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={handleLoginClick}
+                  className="hidden md:inline-flex"
+                  data-testid="button-login"
+                >
+                  Login
+                </Button>
+              </>
             )}
           </div>
         </div>

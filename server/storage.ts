@@ -66,6 +66,12 @@ import {
   type InsertArtisanWork,
   type ArtisanWork,
   type WishlistItem,
+  vendorSuborders,
+  type InsertVendorSuborder,
+  type VendorSuborder,
+  orderAudits,
+  type InsertOrderAudit,
+  type OrderAudit,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, or, like, gte, lte, desc, asc, count, inArray, sql } from "drizzle-orm";
@@ -165,6 +171,17 @@ export interface IStorage {
   getOrderItems(orderId: string): Promise<OrderItem[]>;
   getOrderItemsWithProductsForOrders(orderIds: string[]): Promise<Record<string, Array<OrderItem & { product: Product | null }>>>;
 
+  // Vendor Suborder operations
+  createVendorSuborder(suborder: InsertVendorSuborder): Promise<VendorSuborder>;
+  getVendorSubordersByOrder(orderId: string): Promise<VendorSuborder[]>;
+  getVendorSubordersByStore(storeId: string): Promise<VendorSuborder[]>;
+  getVendorSubordersByVendor(vendorId: string): Promise<VendorSuborder[]>;
+  updateVendorSuborderStatus(id: string, status: string): Promise<VendorSuborder | undefined>;
+  getVendorSuborder(id: string): Promise<VendorSuborder | undefined>;
+
+  // Order Audit operations
+  createOrderAudit(audit: InsertOrderAudit): Promise<OrderAudit>;
+  getOrderAuditsByOrder(orderId: string): Promise<OrderAudit[]>;
   // Category operations
   createCategory(category: InsertCategory): Promise<Category>;
   getAllCategories(): Promise<Category[]>;
@@ -739,6 +756,49 @@ export class DatabaseStorage implements IStorage {
     }
 
     return grouped;
+  }
+
+  async createVendorSuborder(suborder: InsertVendorSuborder): Promise<VendorSuborder> {
+    const [row] = await db.insert(vendorSuborders).values(suborder).returning();
+    return row;
+  }
+
+  async getVendorSubordersByOrder(orderId: string): Promise<VendorSuborder[]> {
+    return await db.select().from(vendorSuborders).where(eq(vendorSuborders.orderId, orderId));
+  }
+
+  async getVendorSubordersByStore(storeId: string): Promise<VendorSuborder[]> {
+    return await db.select().from(vendorSuborders).where(eq(vendorSuborders.storeId, storeId));
+  }
+
+  async getVendorSubordersByVendor(vendorId: string): Promise<VendorSuborder[]> {
+    return await db.select().from(vendorSuborders).where(eq(vendorSuborders.vendorRef, vendorId));
+  }
+
+  async updateVendorSuborderStatus(id: string, status: string, updates?: { trackingNumber?: string | null; courierService?: string | null }): Promise<VendorSuborder | undefined> {
+    const payload: any = { status, updatedAt: new Date() as any };
+    if (updates && typeof updates.trackingNumber !== 'undefined') payload.trackingNumber = updates.trackingNumber || null;
+    if (updates && typeof updates.courierService !== 'undefined') payload.courierService = updates.courierService || null;
+    const [row] = await db
+      .update(vendorSuborders)
+      .set(payload)
+      .where(eq(vendorSuborders.id, id))
+      .returning();
+    return row;
+  }
+
+  async getVendorSuborder(id: string): Promise<VendorSuborder | undefined> {
+    const [row] = await db.select().from(vendorSuborders).where(eq(vendorSuborders.id, id));
+    return row;
+  }
+
+  async createOrderAudit(audit: InsertOrderAudit): Promise<OrderAudit> {
+    const [row] = await db.insert(orderAudits).values(audit).returning();
+    return row;
+  }
+
+  async getOrderAuditsByOrder(orderId: string): Promise<OrderAudit[]> {
+    return await db.select().from(orderAudits).where(eq(orderAudits.orderId, orderId)).orderBy(desc(orderAudits.createdAt));
   }
 
   // Category operations

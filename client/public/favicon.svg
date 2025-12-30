@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Sanatzar</title>
+  <defs>
+    <style>
+      .s { fill: none; stroke: #E27312; stroke-width: 8; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+  </defs>
+  <path class="s" d="M 20 16 C 20 10 44 10 44 16 C 44 22 20 22 20 28 C 20 34 44 34 44 40" />
+</svg>

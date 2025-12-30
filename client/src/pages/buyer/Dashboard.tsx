@@ -254,7 +254,7 @@ export default function BuyerDashboard() {
   }, [orders, orderFilter, sortField, sortDir]);
 
   const [viewOrderId, setViewOrderId] = useState<string | null>(null);
-  const { data: viewOrder } = useQuery<{ id: string; total: string; status: string; paymentMethod: string | null; shippingAddress: string | null; trackingNumber?: string | null; courierService?: string | null; items: OrderItemWithProduct[] }>({
+  const { data: viewOrder } = useQuery<{ id: string; total: string; status: string; paymentMethod: string | null; shippingAddress: string | null; trackingNumber?: string | null; courierService?: string | null; items: OrderItemWithProduct[]; vendorTracking?: Array<{ storeId: string; trackingNumber?: string | null; courierService?: string | null }> }>({
     queryKey: ["/api/buyer/orders/details", viewOrderId],
     enabled: !!viewOrderId,
     queryFn: async () => {
@@ -280,6 +280,27 @@ export default function BuyerDashboard() {
     })();
   }, [viewOrderId]);
 
+  const [liveStatus, setLiveStatus] = useState<string | null>(null);
+  const [liveVendorStatuses, setLiveVendorStatuses] = useState<Array<{ storeId: string; status: string; vendorRef?: string | null }>>([]);
+  useEffect(() => {
+    setLiveStatus(((viewOrder as any)?.consolidatedStatus as string) || null);
+  }, [viewOrder]);
+  useEffect(() => {
+    let es: EventSource | null = null;
+    if (viewOrderId) {
+      es = new EventSource(`/api/buyer/orders/${viewOrderId}/live`);
+      es.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          setLiveStatus((data?.consolidatedStatus as string) || null);
+          setLiveVendorStatuses(((data?.vendorStatuses as any[]) || []).map((v) => ({ storeId: v.storeId, status: v.status, vendorRef: v.vendorRef })));
+        } catch {}
+      };
+    }
+    return () => {
+      try { es?.close(); } catch {}
+    };
+  }, [viewOrderId]);
 
   const [messageText, setMessageText] = useState("");
   const [receiverId, setReceiverId] = useState<string>("");
@@ -484,25 +505,68 @@ export default function BuyerDashboard() {
           </Tabs>
 
           <Dialog open={!!viewOrderId} onOpenChange={(open) => !open && setViewOrderId(null)}>
-            <DialogContent className="sm:max-w-[900px] w-[95vw] max-h-[85vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Order Details</DialogTitle>
-                <DialogDescription>View order information and communicate with the vendor about delivery or issues.</DialogDescription>
-              </DialogHeader>
-              {!viewOrder ? (
-                <p className="text-muted-foreground">Loading details...</p>
-              ) : (
-                <div className="space-y-4">
-                  {viewReceipt && (
-                    <OrderReceipt
-                      receipt={viewReceipt as any}
-                      onDownloadPdf={() => {
-                        const w = window.open(`/api/orders/${viewOrderId}/receipt.html`, 'receipt');
+          <DialogContent className="sm:max-w-[900px] w-[95vw] max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Order Details</DialogTitle>
+              <DialogDescription>View order information and communicate with the vendor about delivery or issues.</DialogDescription>
+            </DialogHeader>
+            {!viewOrder ? (
+              <p className="text-muted-foreground">Loading details...</p>
+            ) : (
+              <div className="space-y-4">
+                {liveStatus && (
+                  <div className="flex items-center gap-2">
+                    <div className="text-sm text-muted-foreground">Live Status</div>
+                    <Badge variant={liveStatus === 'delivered' ? 'default' : 'secondary'}>{liveStatus}</Badge>
+                  </div>
+                )}
+                {liveVendorStatuses.length > 0 && (
+                  <div className="space-y-1">
+                    <div className="text-xs text-muted-foreground">Vendor Live</div>
+                    <div className="space-y-1">
+                      {liveVendorStatuses.map((vs) => {
+                        const store = vendors.find(v => v.storeId === vs.storeId);
+                        const vt = Array.isArray((viewOrder as any)?.vendorTracking) ? ((viewOrder as any).vendorTracking as any[]).find((t: any) => t.storeId === vs.storeId) : undefined;
+                        const variant = vs.status === 'delivered' ? 'default' : (vs.status === 'cancelled' ? 'destructive' : 'secondary');
+                        return (
+                          <div key={vs.storeId} className="flex items-center gap-2 text-sm">
+                            <span className="font-medium">{store?.storeName || vs.storeId}</span>
+                            <Badge variant={variant as any}>{vs.status}</Badge>
+                            {vt?.courierService && <span className="text-muted-foreground">Courier: {vt.courierService}</span>}
+                            {vt?.trackingNumber && <span className="text-muted-foreground">Tracking: {vt.trackingNumber}</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {viewReceipt && (
+                  <OrderReceipt
+                    receipt={viewReceipt as any}
+                    onDownloadPdf={() => {
+                      const w = window.open(`/api/orders/${viewOrderId}/receipt.html`, 'receipt');
                         if (!w) return;
                         w.focus();
                         w.onload = () => w.print();
                       }}
                     />
+                  )}
+                  {Array.isArray((viewOrder as any)?.vendorTracking) && ((viewOrder as any).vendorTracking as any[]).length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Vendor Tracking</div>
+                      <div className="space-y-1">
+                        {((viewOrder as any).vendorTracking as any[]).map((vt: any) => {
+                          const store = vendors.find(v => v.storeId === vt.storeId);
+                          return (
+                            <div key={vt.storeId} className="text-sm">
+                              <span className="font-medium">{store?.storeName || vt.storeId}</span>
+                              <span className="ml-2 text-muted-foreground">Courier: {vt.courierService || 'n/a'}</span>
+                              <span className="ml-2 text-muted-foreground">Tracking: {vt.trackingNumber || 'n/a'}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   )}
                   <div className="flex flex-wrap gap-2">
                     <Button onClick={reorder} aria-label="Reorder items">Reorder Items</Button>

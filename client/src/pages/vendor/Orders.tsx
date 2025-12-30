@@ -36,6 +36,7 @@ type Order = {
   buyerId: string;
   total: string;
   status: string;
+  multiVendor?: boolean;
   paymentMethod: string | null;
   shippingAddress: string | null;
   shippingPhone?: string | null;
@@ -215,6 +216,9 @@ export default function VendorOrders() {
                               Order #{order.id.slice(0, 8)}
                             </CardTitle>
                             {getStatusBadge(order.status)}
+                            {order.multiVendor ? (
+                              <Badge variant="outline" className="text-xs">Multi-vendor</Badge>
+                            ) : null}
                           </div>
                           <CardDescription>
                             Placed on {new Date(order.createdAt).toLocaleDateString('en-US', {
@@ -231,10 +235,10 @@ export default function VendorOrders() {
                           <div className="text-2xl font-bold" data-testid={`text-order-total-${order.id}`}>
                             {formatPrice(order.total)}
                           </div>
-                        </div>
                       </div>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
                       {/* Order Items */}
                       {order.items && order.items.length > 0 && (
                         <div className="space-y-3">
@@ -383,8 +387,8 @@ export default function VendorOrders() {
                       </div>
 
                       {/* Actions */}
-                      <div className="grid gap-3 border-t pt-4 md:grid-cols-3">
-                        <div className="space-y-2">
+                      <div className="grid gap-4 border-t pt-4 md:grid-cols-3">
+                        <div className="space-y-2 min-w-0">
                           <h4 className="font-medium text-sm">Update Status</h4>
                           <div className="flex flex-wrap gap-2">
                             {(() => {
@@ -410,11 +414,15 @@ export default function VendorOrders() {
                             })()}
                           </div>
                         </div>
-                        <div className="space-y-2">
+                        <div className="space-y-2 min-w-0">
+                          <h4 className="font-medium text-sm">Suborder Fulfillment</h4>
+                          <SuborderPanel orderId={order.id} />
+                        </div>
+                        <div className="space-y-2 min-w-0">
                           <h4 className="font-medium text-sm">Communication</h4>
                           <MessagePanel buyerId={order.buyerId} orderId={order.id} />
                         </div>
-                        <div className="space-y-2">
+                        <div className="space-y-2 min-w-0">
                           <h4 className="font-medium text-sm">Order Controls</h4>
                           <div className="flex flex-wrap gap-2">
                             <Button variant="destructive" size="sm" disabled={order.status === 'cancelled'} className={order.status === 'cancelled' ? 'opacity-50 cursor-not-allowed' : ''} onClick={() => {
@@ -524,6 +532,127 @@ export default function VendorOrders() {
         </Dialog>
       </div>
     </VendorDashboard>
+  );
+}
+
+function SuborderPanel({ orderId }: { orderId: string }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data: suborders = [] } = useQuery<Array<{ id: string; orderId: string; storeId: string; status: string; trackingNumber?: string | null; courierService?: string | null }>>({
+    queryKey: ['/api/vendor/orders/suborders', orderId],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`/api/vendor/orders/${orderId}/suborders`, { credentials: 'include' });
+        if (!res.ok) {
+          let message = '';
+          try { const j = await res.json(); message = j?.message || ''; } catch {}
+          toast({ title: 'Suborders fetch failed', description: message || String(res.status), variant: 'destructive' });
+          return [];
+        }
+        const json = await res.json();
+        return Array.isArray(json) ? json : [];
+      } catch (e: any) {
+        toast({ title: 'Suborders fetch failed', description: e?.message, variant: 'destructive' });
+        return [];
+      }
+    }
+  });
+  const [vendors, setVendors] = useState<Array<{ storeId: string; storeName?: string }>>([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`/api/orders/${orderId}/vendors`, { credentials: 'include' });
+        if (res.ok) {
+          const j = await res.json();
+          setVendors(Array.isArray(j) ? j.map((v: any) => ({ storeId: v.storeId, storeName: v.storeName })) : []);
+        }
+      } catch {}
+    })();
+  }, [orderId]);
+  const getSubStatusBadge = (status: string) => {
+    const m: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline', className?: string }> = {
+      pending: { variant: 'outline', className: 'border-yellow-500/50 text-yellow-700 dark:text-yellow-400' },
+      processing: { variant: 'outline', className: 'border-blue-500/50 text-blue-700 dark:text-blue-400' },
+      shipped: { variant: 'outline', className: 'border-purple-500/50 text-purple-700 dark:text-purple-400' },
+      delivered: { variant: 'default' },
+      cancelled: { variant: 'destructive' },
+    };
+    const cfg = m[status] || { variant: 'secondary' };
+    return <Badge variant={cfg.variant} className={`text-xs ${cfg.className || ''}`}>{status}</Badge>;
+  };
+  const updateSubStatus = useMutation({
+    mutationFn: async (payload: { id: string; status: string; trackingNumber?: string; courierService?: string }) => {
+      return apiRequest('PUT', `/api/vendor/suborders/${payload.id}/status`, payload);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['/api/vendor/orders'] });
+      await queryClient.invalidateQueries({ queryKey: ['/api/vendor/orders/suborders', orderId] });
+      toast({ title: 'Suborder updated' });
+    },
+    onError: (err: any) => toast({ title: 'Update failed', description: err.message, variant: 'destructive' }),
+  });
+  const [shipId, setShipId] = useState<string | null>(null);
+  const [courier, setCourier] = useState('');
+  const [tracking, setTracking] = useState('');
+  const shipOpen = !!shipId;
+  const close = () => {
+    setShipId(null);
+    setCourier('');
+    setTracking('');
+  };
+  const submit = () => {
+    if (!shipId) return;
+    updateSubStatus.mutate({ id: shipId, status: 'shipped', trackingNumber: tracking || undefined, courierService: courier || undefined });
+    close();
+  };
+  return (
+    <>
+      {(Array.isArray(suborders) ? suborders : []).length === 0 ? (
+        <p className="text-muted-foreground text-sm">No suborders found</p>
+      ) : (
+        <div className="space-y-2">
+          {(Array.isArray(suborders) ? suborders : []).map(s => {
+            const canProcessing = s.status === 'pending';
+            const canShipped = s.status === 'processing';
+            const canDelivered = s.status === 'shipped';
+            const vMap = new Map(vendors.map(v => [v.storeId, v.storeName || v.storeId]));
+            return (
+              <div key={s.id} className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline" className="text-xs">Suborder #{s.id.slice(0,8)}</Badge>
+                <Badge variant="outline" className="text-xs">{vMap.get(s.storeId) || s.storeId}</Badge>
+                {getSubStatusBadge(s.status)}
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" disabled={!canProcessing} className={!canProcessing ? 'opacity-50 cursor-not-allowed' : ''} onClick={() => updateSubStatus.mutate({ id: s.id, status: 'processing' })}>Processing</Button>
+                  <Button variant="outline" size="sm" disabled={!canShipped} className={!canShipped ? 'opacity-50 cursor-not-allowed' : ''} onClick={() => setShipId(s.id)}>Shipped</Button>
+                  <Button variant="outline" size="sm" disabled={!canDelivered} className={!canDelivered ? 'opacity-50 cursor-not-allowed' : ''} onClick={() => updateSubStatus.mutate({ id: s.id, status: 'delivered' })}>Delivered</Button>
+                </div>
+                {s.courierService && (
+                  <span className="text-xs text-muted-foreground">Courier: {s.courierService}</span>
+                )}
+                {s.trackingNumber && (
+                  <span className="text-xs text-muted-foreground">Tracking: {s.trackingNumber}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <Dialog open={shipOpen} onOpenChange={(open) => !open && close()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mark Suborder as Shipped</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input placeholder="Courier service" value={courier} onChange={(e) => setCourier(e.target.value)} />
+            <Input placeholder="Tracking number" value={tracking} onChange={(e) => setTracking(e.target.value)} />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={close}>Cancel</Button>
+              <Button onClick={submit}>Save</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

@@ -96,6 +96,16 @@ export default function Home() {
 
   // Remove infinite scroll; pagination controls are provided below
 
+  // Ensure the homepage loads at the top and not at an anchored section
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      if (window.location.hash) {
+        history.replaceState(null, "", window.location.pathname + window.location.search);
+      }
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    }
+  }, []);
+
   // Create GI brands from all categories
   const giBrands = categoriesData?.map(cat => ({
     giBrand: cat.giBrand,
@@ -325,7 +335,7 @@ export default function Home() {
             >
               <CarouselContent>
                 {giBrands.map((brand) => (
-                  <CarouselItem key={brand.giBrand} className="basis-1/4">
+                  <CarouselItem key={brand.giBrand} className="basis-1/2 sm:basis-1/3 lg:basis-1/4">
                     <GIBrandCard {...brand} />
                   </CarouselItem>
                 ))}
@@ -415,13 +425,13 @@ export default function Home() {
           ) : (
             <>
               {productsPageLoading && !productsPage ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-6">
                   {Array.from({ length: 20 }).map((_, i) => (
                     <div key={i} className="h-80 bg-muted/50 rounded-lg animate-pulse" />
                   ))}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-6">
                   {(productsPage?.products || []).map((product) => {
                     const base = Number(product.price);
                     const list = offersByStoreId[product.storeId] || [];
@@ -498,7 +508,8 @@ export default function Home() {
                       <PaginationContent>
                         <PaginationItem>
                           <PaginationPrevious
-                            href="#products-section"
+                            role="button"
+                            tabIndex={0}
                             onClick={(e) => {
                               e.preventDefault();
                               if (page > 1) setPage(page - 1);
@@ -511,7 +522,8 @@ export default function Home() {
                               <PaginationEllipsis />
                             ) : (
                               <PaginationLink
-                                href="#products-section"
+                                role="button"
+                                tabIndex={0}
                                 isActive={t === page}
                                 onClick={(e) => {
                                   e.preventDefault();
@@ -525,7 +537,8 @@ export default function Home() {
                         ))}
                         <PaginationItem>
                           <PaginationNext
-                            href="#products-section"
+                            role="button"
+                            tabIndex={0}
                             onClick={(e) => {
                               e.preventDefault();
                               const total = totalPages;

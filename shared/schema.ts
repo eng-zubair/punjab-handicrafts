@@ -301,6 +301,25 @@ export const wishlistItems = pgTable("wishlist_items", {
   index("IDX_wishlist_unique").on(table.userId, table.productId)
 ]);
 
+export const vendorSuborders = pgTable("vendor_suborders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").notNull().references(() => orders.id),
+  storeId: varchar("store_id").notNull().references(() => stores.id),
+  vendorRef: varchar("vendor_ref"),
+  trackingNumber: text("tracking_number"),
+  courierService: text("courier_service"),
+  subtotal: decimal("subtotal", { precision: 10, scale: 2 }).notNull().default("0"),
+  taxAmount: decimal("tax_amount", { precision: 10, scale: 2 }).notNull().default("0"),
+  shippingCost: decimal("shipping_cost", { precision: 10, scale: 2 }).notNull().default("0"),
+  total: decimal("total", { precision: 10, scale: 2 }).notNull().default("0"),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("IDX_vendor_suborders_order").on(table.orderId),
+  index("IDX_vendor_suborders_store").on(table.storeId),
+]);
+
 export const PRODUCT_CATEGORIES = [
   "Clothing",
   "Stitched",
@@ -444,6 +463,11 @@ export const insertNewsletterSubscriptionSchema = createInsertSchema(newsletterS
   createdAt: true,
 });
 
+export const insertVendorSuborderSchema = createInsertSchema(vendorSuborders).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
 export type UpsertUser = z.infer<typeof upsertUserSchema>;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -480,6 +504,11 @@ export type Transaction = typeof transactions.$inferSelect;
 
 export type InsertPayout = z.infer<typeof insertPayoutSchema>;
 export type Payout = typeof payouts.$inferSelect;
+
+export type InsertVendorSuborder = z.infer<typeof insertVendorSuborderSchema>;
+export type VendorSuborder = typeof vendorSuborders.$inferSelect;
+export type InsertOrderAudit = z.infer<typeof insertOrderAuditSchema>;
+export type OrderAudit = typeof orderAudits.$inferSelect;
 
 export type InsertProductGroup = z.infer<typeof insertProductGroupSchema>;
 export type ProductGroup = typeof productGroups.$inferSelect;
@@ -573,6 +602,27 @@ export const configAudits = pgTable("config_audits", {
   changes: jsonb("changes"),
   changedBy: varchar("changed_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const orderAudits = pgTable("order_audits", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").notNull().references(() => orders.id),
+  suborderId: varchar("suborder_id").references(() => vendorSuborders.id),
+  actorId: varchar("actor_id").notNull().references(() => users.id),
+  action: text("action").notNull().default("status_change"),
+  fromStatus: text("from_status"),
+  toStatus: text("to_status"),
+  note: text("note"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("IDX_order_audit_order").on(table.orderId),
+  index("IDX_order_audit_suborder").on(table.suborderId),
+  index("IDX_order_audit_actor").on(table.actorId),
+]);
+
+export const insertOrderAuditSchema = createInsertSchema(orderAudits).omit({
+  id: true,
+  createdAt: true,
 });
 
 // ===== ARTISAN TRAINING MODULE TABLES =====

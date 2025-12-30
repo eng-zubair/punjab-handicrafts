@@ -220,6 +220,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     await ensureVariantSchema();
     await ensureOfferSchema();
     await ensureWishlistSchema();
+    await ensureVendorSubordersSchema();
   } catch { }
 
   app.get('/api/ping-test', (req, res) => {
@@ -254,6 +255,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
       orderSchemaEnsured = true;
     } catch (e) {
       console.error('ensureOrderSchema error:', e);
+    }
+  }
+  let vendorSubordersSchemaEnsured = false;
+  async function ensureVendorSubordersSchema() {
+    if (vendorSubordersSchemaEnsured) return;
+    const stmts = [
+      `CREATE TABLE IF NOT EXISTS vendor_suborders (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        order_id varchar NOT NULL REFERENCES orders(id),
+        store_id varchar NOT NULL REFERENCES stores(id),
+        vendor_ref varchar,
+        tracking_number text,
+        courier_service text,
+        subtotal numeric(10,2) NOT NULL DEFAULT 0,
+        tax_amount numeric(10,2) NOT NULL DEFAULT 0,
+        shipping_cost numeric(10,2) NOT NULL DEFAULT 0,
+        total numeric(10,2) NOT NULL DEFAULT 0,
+        status text NOT NULL DEFAULT 'pending',
+        created_at timestamp DEFAULT now() NOT NULL,
+        updated_at timestamp DEFAULT now() NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS IDX_vendor_suborders_order ON vendor_suborders(order_id)`,
+      `CREATE INDEX IF NOT EXISTS IDX_vendor_suborders_store ON vendor_suborders(store_id)`,
+      `ALTER TABLE vendor_suborders ADD COLUMN IF NOT EXISTS tracking_number text`,
+      `ALTER TABLE vendor_suborders ADD COLUMN IF NOT EXISTS courier_service text`
+    ];
+    try {
+      for (const s of stmts) {
+        await pool.query(s);
+      }
+      vendorSubordersSchemaEnsured = true;
+    } catch (e) {
+      console.error('ensureVendorSubordersSchema error:', e);
+    }
+  }
+
+  const orderSseClients = new Map<string, Set<any>>();
+  function computeConsolidatedStatus(statuses: string[]): string {
+    if (statuses.length === 0) return 'pending';
+    if (statuses.every(s => s === 'delivered')) return 'delivered';
+    if (statuses.some(s => s === 'shipped')) return 'shipped';
+    if (statuses.some(s => s === 'processing')) return 'processing';
+    return 'pending';
+  }
+  async function broadcastOrderStatus(orderId: string) {
+    try {
+      const subs = await storage.getVendorSubordersByOrder(orderId);
+      const statuses = subs.map(s => s.status);
+      const consolidatedStatus = computeConsolidatedStatus(statuses);
+      const payload = {
+        orderId,
+        consolidatedStatus,
+        vendorStatuses: subs.map(s => ({ vendorRef: (s as any).vendorRef || null, storeId: s.storeId, status: s.status, trackingNumber: (s as any).trackingNumber || null, courierService: (s as any).courierService || null })),
+        shippingBreakdown: subs.map(s => ({ storeId: s.storeId, shippingCost: String(s.shippingCost) })),
+      };
+      const set = orderSseClients.get(orderId);
+      if (!set || set.size === 0) return;
+      const dataLine = `data: ${JSON.stringify(payload)}\n\n`;
+      for (const res of Array.from(set)) {
+        try {
+          res.write(dataLine);
+        } catch {}
+      }
+    } catch (e) {
+      console.error('broadcastOrderStatus error:', e);
     }
   }
   let variantSchemaEnsured = false;
@@ -919,6 +985,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const items = await storage.getOrderItemsWithProductsForOrders([order.id]);
       const list = items[order.id] || [];
       const subtotal = list.reduce((s: number, it: any) => s + parseFloat(String(it.price)) * Number(it.quantity), 0);
+      const suborders = await storage.getVendorSubordersByOrder(order.id);
+      const vendorStatuses = suborders.map(s => ({ storeId: s.storeId, status: s.status, vendorRef: (s as any).vendorRef || null }));
+      const vendorTracking = suborders.map(s => ({ storeId: s.storeId, trackingNumber: (s as any).trackingNumber || null, courierService: (s as any).courierService || null }));
+      const consolidatedStatus = computeConsolidatedStatus(suborders.map(s => s.status));
+      const shippingBreakdown = suborders.map(s => ({ storeId: s.storeId, shippingCost: String(s.shippingCost) }));
       const withItems = {
         ...order,
         total: String(order.total),
@@ -927,6 +998,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         shippingMethod: (order as any).shippingMethod || null,
         subtotal: String(subtotal),
         items: list,
+        vendorStatuses,
+        consolidatedStatus,
+        shippingBreakdown,
+        vendorTracking,
       };
       res.json(withItems);
     } catch (error) {
@@ -975,6 +1050,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Fetch order vendors error:', error);
       res.status(500).json({ message: 'Failed to fetch order vendors' });
+    }
+  });
+
+  app.get('/api/buyer/orders/:id/live', isAuthenticated, async (req: any, res) => {
+    try {
+      const order = await storage.getOrder(req.params.id);
+      if (!order) return res.status(404).json({ message: 'Order not found' });
+      if (order.buyerId !== req.userId) return res.status(403).json({ message: 'Not authorized' });
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+      const set = orderSseClients.get(order.id) || new Set<any>();
+      set.add(res);
+      orderSseClients.set(order.id, set);
+      const subs = await storage.getVendorSubordersByOrder(order.id);
+      const payload = {
+        orderId: order.id,
+        consolidatedStatus: computeConsolidatedStatus(subs.map(s => s.status)),
+        vendorStatuses: subs.map(s => ({ vendorRef: (s as any).vendorRef || null, storeId: s.storeId, status: s.status })),
+        shippingBreakdown: subs.map(s => ({ storeId: s.storeId, shippingCost: String(s.shippingCost) })),
+      };
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      req.on('close', () => {
+        const current = orderSseClients.get(order.id);
+        if (current) {
+          current.delete(res);
+          if (current.size === 0) orderSseClients.delete(order.id);
+        }
+      });
+    } catch (error) {
+      console.error('Buyer live status stream error:', error);
+      res.status(500).end();
     }
   });
 
@@ -1760,6 +1869,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const validated = insertOfferSchema.parse({
         ...payload,
+        startAt,
+        endAt,
         scopeProducts: Array.isArray(payload.scopeProducts) ? payload.scopeProducts : undefined,
         scopeCategories: Array.isArray(payload.scopeCategories) ? payload.scopeCategories : undefined,
         scopeVariants: Array.isArray(payload.scopeVariants) ? payload.scopeVariants : undefined,
@@ -1792,6 +1903,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (isNaN(startAt.getTime()) || isNaN(endAt.getTime()) || startAt > endAt) {
           return res.status(400).json({ message: "Invalid start/end times" });
         }
+        updates.startAt = startAt;
+        updates.endAt = endAt;
+      } else if (updates.startAt) {
+        const startAt = new Date(updates.startAt);
+        if (isNaN(startAt.getTime())) {
+          return res.status(400).json({ message: "Invalid start time" });
+        }
+        updates.startAt = startAt;
+      } else if (updates.endAt) {
+        const endAt = new Date(updates.endAt);
+        if (isNaN(endAt.getTime())) {
+          return res.status(400).json({ message: "Invalid end time" });
+        }
+        updates.endAt = endAt;
       }
       if (updates.scopeProducts && !Array.isArray(updates.scopeProducts)) updates.scopeProducts = undefined;
       if (updates.scopeCategories && !Array.isArray(updates.scopeCategories)) updates.scopeCategories = undefined;
@@ -2310,6 +2435,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await ensureOrderSchema();
       await ensureVariantSchema();
       await ensureTaxShipSchema();
+      await ensureVendorSubordersSchema();
       const userId = req.userId;
       const { items, paymentMethod, phoneNumber, preferredCommunication, saveInfo,
         recipientName, recipientEmail,
@@ -2502,6 +2628,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      try {
+        const storeIds = Array.from(new Set(validatedItems.map((it: any) => it.storeId)));
+        const storeMapRows = await Promise.all(storeIds.map(id => storage.getStore(id)));
+        const storeVendorMap = new Map(storeMapRows.filter(Boolean).map(s => [s!.id, s!.vendorId]));
+        const weightByProduct = new Map<string, number>();
+        for (const b of shipRes.breakdown) {
+          weightByProduct.set(b.productId, parseFloat(String(b.weightKg)) || 0);
+        }
+        const totalWeight = Array.from(weightByProduct.values()).reduce((s, w) => s + w, 0);
+        const itemStoreByProduct = new Map<string, string>();
+        for (const it of validatedItems) {
+          itemStoreByProduct.set(it.productId, it.storeId);
+        }
+        const taxByStore = new Map<string, number>();
+        for (const br of taxRes.breakdown) {
+          const sid = itemStoreByProduct.get(br.productId);
+          if (!sid) continue;
+          taxByStore.set(sid, (taxByStore.get(sid) || 0) + (parseFloat(String(br.tax)) || 0));
+        }
+        for (const sid of storeIds) {
+          const itemsForStore = validatedItems.filter((it: any) => it.storeId === sid);
+          const subtotal = itemsForStore.reduce((s: number, it: any) => s + (parseFloat(String(it.price)) * Number(it.quantity)), 0);
+          const storeWeight = itemsForStore.reduce((s: number, it: any) => s + (weightByProduct.get(it.productId) || 0), 0);
+          const shippingAlloc = totalWeight > 0 ? (shipRes.amount * (storeWeight / totalWeight)) : 0;
+          const taxAlloc = taxByStore.get(sid) || 0;
+          const subTotalRounded = parseFloat(subtotal.toFixed(2));
+          const shipRounded = parseFloat(shippingAlloc.toFixed(2));
+          const taxRounded = parseFloat(taxAlloc.toFixed(2));
+          const totalForStore = parseFloat((subTotalRounded + shipRounded + taxRounded).toFixed(2));
+          const vendorRef = storeVendorMap.get(sid) || null;
+          await storage.createVendorSuborder({
+            orderId: order.id,
+            storeId: sid,
+            vendorRef: vendorRef || null,
+            subtotal: subTotalRounded.toFixed(2) as any,
+            taxAmount: taxRounded.toFixed(2) as any,
+            shippingCost: shipRounded.toFixed(2) as any,
+            total: totalForStore.toFixed(2) as any,
+            status: 'pending',
+          } as any);
+        }
+      } catch (e) {
+        console.error('Vendor suborders creation error:', e);
+      }
+
       if (lowerMethod === 'cod') {
         try {
           let adminId: string | undefined;
@@ -2572,18 +2743,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const user = await storage.getUser(userId);
+      let vendorStoreIds: string[] = [];
       if (order.buyerId !== userId && user?.role !== "admin") {
-        const orderItems = await storage.getOrderItems(order.id);
+        const orderItemsCheck = await storage.getOrderItems(order.id);
         const vendorStores = await storage.getStoresByVendor(userId);
-        const vendorStoreIds = vendorStores.map(s => s.id);
-        const hasVendorItem = orderItems.some(item => vendorStoreIds.includes(item.storeId));
+        vendorStoreIds = vendorStores.map(s => s.id);
+        const hasVendorItem = orderItemsCheck.some(item => vendorStoreIds.includes(item.storeId));
 
         if (!hasVendorItem) {
           return res.status(403).json({ message: "Not authorized to view this order" });
         }
       }
 
-      const items = await storage.getOrderItems(order.id);
+      let items = await storage.getOrderItems(order.id);
+      if (order.buyerId !== userId && user?.role !== "admin") {
+        items = items.filter(it => vendorStoreIds.includes(it.storeId));
+      }
       const buyer = await storage.getUser(order.buyerId);
       res.json({ ...order, items, buyer: buyer ? sanitizeUser(buyer) : null });
     } catch (error) {
@@ -2601,18 +2776,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const user = await storage.getUser(userId);
+      let vendorStoreIds: string[] = [];
       if (order.buyerId !== userId && user?.role !== 'admin') {
-        const orderItems = await storage.getOrderItems(order.id);
+        const orderItemsCheck = await storage.getOrderItems(order.id);
         const vendorStores = await storage.getStoresByVendor(userId);
-        const vendorStoreIds = vendorStores.map(s => s.id);
-        const hasVendorItem = orderItems.some(item => vendorStoreIds.includes(item.storeId));
+        vendorStoreIds = vendorStores.map(s => s.id);
+        const hasVendorItem = orderItemsCheck.some(item => vendorStoreIds.includes(item.storeId));
         if (!hasVendorItem) {
           return res.status(403).json({ message: 'Not authorized' });
         }
       }
 
       const itemsWithProducts = await storage.getOrderItemsWithProductsForOrders([order.id]);
-      const list = itemsWithProducts[order.id] || [];
+      let list = itemsWithProducts[order.id] || [];
+      if (order.buyerId !== userId && user?.role !== 'admin') {
+        list = list.filter(it => vendorStoreIds.includes(it.storeId));
+      }
       const storeIds = Array.from(new Set(list.map(i => i.storeId)));
       const stores = await Promise.all(storeIds.map(id => storage.getStore(id)));
       const storeMap = new Map(stores.filter(Boolean).map(s => [s!.id, s!.name]));
@@ -2663,18 +2842,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const user = await storage.getUser(userId);
+      let vendorStoreIds: string[] = [];
       if (order.buyerId !== userId && user?.role !== 'admin') {
-        const orderItems = await storage.getOrderItems(order.id);
+        const orderItemsCheck = await storage.getOrderItems(order.id);
         const vendorStores = await storage.getStoresByVendor(userId);
-        const vendorStoreIds = vendorStores.map(s => s.id);
-        const hasVendorItem = orderItems.some(item => vendorStoreIds.includes(item.storeId));
+        vendorStoreIds = vendorStores.map(s => s.id);
+        const hasVendorItem = orderItemsCheck.some(item => vendorStoreIds.includes(item.storeId));
         if (!hasVendorItem) {
           return res.status(403).send('Forbidden');
         }
       }
 
       const itemsWithProducts = await storage.getOrderItemsWithProductsForOrders([order.id]);
-      const list = itemsWithProducts[order.id] || [];
+      let list = itemsWithProducts[order.id] || [];
+      if (order.buyerId !== userId && user?.role !== 'admin') {
+        list = list.filter(it => vendorStoreIds.includes(it.storeId));
+      }
       const storeIds = Array.from(new Set(list.map(i => i.storeId)));
       const stores = await Promise.all(storeIds.map(id => storage.getStore(id)));
       const storeMap = new Map(stores.filter(Boolean).map(s => [s!.id, s!.name]));
@@ -3098,7 +3281,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/vendor/orders', isAuthenticated, isVendor, async (req: any, res) => {
     try {
       await ensureVariantSchema();
+      await ensureOrderSchema();
       const stores = await storage.getStoresByVendor(req.userId);
+      const vendorStoreIds = stores.map(s => s.id);
       const allOrders = await Promise.all(
         stores.map(store => storage.getOrdersByStore(store.id))
       );
@@ -3116,20 +3301,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const buyerMap = new Map(buyers.filter(Boolean).map(b => [b!.id, b!]));
 
       // Attach items to their respective orders and serialize decimal fields
-      const ordersWithItems = uniqueOrders.map(order => ({
-        ...order,
-        total: String(order.total), // Serialize order total as string to match frontend contract
-        items: (itemsByOrderId[order.id] || []).map(item => ({
-          ...item,
-          product: item.product ? serializeProduct(item.product) : null,
-        })),
-        buyer: buyerMap.get(order.buyerId)
-      }));
+      const ordersWithItems = uniqueOrders.map(order => {
+        const allItems = itemsByOrderId[order.id] || [];
+        const vendorItems = allItems.filter(it => vendorStoreIds.includes(it.storeId));
+        const vendorTotal = vendorItems.reduce((sum: number, it: any) => sum + (parseFloat(String(it.price)) * Number(it.quantity)), 0);
+        const multiVendor = new Set(allItems.map(it => it.storeId)).size > 1;
+        return {
+          ...order,
+          total: vendorTotal.toFixed(2),
+          items: vendorItems.map(item => ({
+            ...item,
+            product: item.product ? serializeProduct(item.product) : null,
+          })),
+          buyer: buyerMap.get(order.buyerId),
+          multiVendor,
+        };
+      });
 
       res.json(ordersWithItems);
     } catch (error) {
       console.error("Error fetching vendor orders:", error);
       res.status(500).json({ message: "Failed to fetch orders" });
+    }
+  });
+
+  app.put('/api/vendor/suborders/:id/status', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      const suborder = await storage.getVendorSuborder(req.params.id);
+      if (!suborder) {
+        return res.status(404).json({ message: "Suborder not found" });
+      }
+      const stores = await storage.getStoresByVendor(req.userId);
+      const storeIds = stores.map(s => s.id);
+      if (!storeIds.includes(suborder.storeId)) {
+        return res.status(403).json({ message: "Not authorized to update this suborder" });
+      }
+      const nextStatus = (req.body?.status || '').toLowerCase();
+      const validStatuses = ['pending', 'processing', 'shipped', 'delivered'];
+      if (!validStatuses.includes(nextStatus)) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+      const transitions: Record<string, string[]> = {
+        pending: ['processing'],
+        processing: ['shipped', 'delivered'],
+        shipped: ['delivered'],
+        delivered: [],
+      };
+      const allowed = transitions[String(suborder.status)] || [];
+      if (!allowed.includes(nextStatus)) {
+        return res.status(400).json({ message: `Invalid transition from ${suborder.status} to ${nextStatus}` });
+      }
+      const trackingNumber = (req.body?.trackingNumber || '').trim();
+      const courierService = (req.body?.courierService || '').trim();
+      if (nextStatus === 'shipped' && !trackingNumber && !(suborder as any).trackingNumber) {
+        return res.status(400).json({ message: "Tracking number is required to mark as shipped" });
+      }
+      const updated = await storage.updateVendorSuborderStatus(suborder.id, nextStatus, {
+        trackingNumber: trackingNumber || undefined,
+        courierService: courierService || undefined,
+      });
+      await storage.createOrderAudit({
+        orderId: suborder.orderId,
+        suborderId: suborder.id,
+        actorId: req.userId,
+        action: 'status_change',
+        fromStatus: String(suborder.status),
+        toStatus: nextStatus,
+        note: null as any,
+      } as any);
+      await broadcastOrderStatus(suborder.orderId);
+      res.json(updated);
+    } catch (error) {
+      console.error("Update suborder status error:", error);
+      res.status(500).json({ message: "Failed to update suborder status" });
+    }
+  });
+
+  app.get('/api/vendor/orders/:id/suborders', isAuthenticated, isVendor, async (req: any, res) => {
+    try {
+      await ensureVendorSubordersSchema();
+      const order = await storage.getOrder(req.params.id);
+      if (!order) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
+      const stores = await storage.getStoresByVendor(req.userId);
+      const storeIds = stores.map(s => s.id);
+      const all = await storage.getVendorSubordersByOrder(req.params.id);
+      const subset = all.filter(s => storeIds.includes(s.storeId));
+      res.json(subset);
+    } catch (error) {
+      console.error("Error fetching suborders for order:", error);
+      res.status(500).json({ message: "Failed to fetch suborders" });
     }
   });
 

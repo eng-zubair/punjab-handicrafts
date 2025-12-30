@@ -35,22 +35,20 @@ app.use("/api", limiter);
 // Content Security Policy
 app.use((req, res, next) => {
   const isDev = app.get("env") === "development";
+  const frameAncestorsEnv = process.env.FRAME_ANCESTORS?.trim();
+  const frameAncestors = frameAncestorsEnv && frameAncestorsEnv.length > 0
+    ? `frame-ancestors ${frameAncestorsEnv}`
+    : (isDev ? "frame-ancestors *" : "frame-ancestors 'none'");
   const cspParts = [
     "default-src 'self'",
-    // In dev, allow inline scripts for Vite's React Fast Refresh preamble
     isDev
       ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'"
       : "script-src 'self'",
-    // Allow inline styles from Tailwind and Google Fonts stylesheets
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    // Allow Google Fonts
     "font-src 'self' https://fonts.gstatic.com",
-    // Allow images from self and data/blob URLs
     "img-src 'self' data: blob:",
-    // Permit HMR websocket in development
     isDev ? "connect-src 'self' ws:" : "connect-src 'self'",
-    // Frames none
-    "frame-ancestors 'none'",
+    frameAncestors,
   ];
   res.setHeader("Content-Security-Policy", cspParts.join("; "));
   next();
