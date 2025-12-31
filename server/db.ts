@@ -22,4 +22,4 @@ export const pool = new Pool({
   ssl: shouldUseSSL ? { rejectUnauthorized: false } : undefined
 });
 
-export const db = drizzle({ client: pool, schema });
+export const db = drizzle({ client: pool, schema, logger: true });

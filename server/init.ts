@@ -5,6 +5,15 @@ import { log } from "./vite";
 
 const SALT_ROUNDS = 12;
 
+export async function ensureDbExtensions() {
+  try {
+    await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
+    log(`✓ Database extensions verified`);
+  } catch (error) {
+    log(`✗ Error ensuring database extensions: ${error}`);
+  }
+}
+
 export async function initializeDefaultAdmin() {
   const adminEmail = process.env.ADMIN_EMAIL;
   const adminPassword = process.env.ADMIN_PASSWORD;

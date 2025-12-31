@@ -4,7 +4,7 @@ import compression from "compression";
 import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { initializeDefaultAdmin, initializeOrderSchema, initializeTrainingSchema } from "./init";
+import { initializeDefaultAdmin, initializeOrderSchema, initializeTrainingSchema, ensureDbExtensions } from "./init";
 
 const app = express();
 
@@ -105,6 +105,7 @@ app.use((req, res, next) => {
   }
 
   // Ensure DB schema before any storage reads, then initialize default admin
+  await ensureDbExtensions();
   await initializeOrderSchema();
   await initializeTrainingSchema();
   await initializeDefaultAdmin();
