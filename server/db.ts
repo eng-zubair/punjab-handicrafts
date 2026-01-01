@@ -22,4 +22,6 @@ export const pool = new Pool({
   ssl: shouldUseSSL ? { rejectUnauthorized: false } : undefined
 });
 
-export const db = drizzle({ client: pool, schema, logger: true });
+const enableDbLogger = process.env.NODE_ENV !== 'production';
+
+export const db = drizzle({ client: pool, schema, logger: enableDbLogger });

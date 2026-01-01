@@ -79,9 +79,14 @@ export function serveStatic(app: Express) {
     );
   }
 
-  app.use(express.static(distPath));
+  app.use(
+    express.static(distPath, {
+      maxAge: "1d",
+      etag: true,
+      lastModified: true,
+    }),
+  );
 
-  // fall through to index.html for client-side routes on GET only
   app.get("*", (req, res, next) => {
     const url = req.originalUrl;
     if (url.startsWith("/api")) {
