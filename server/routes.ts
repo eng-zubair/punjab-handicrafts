@@ -3,7 +3,7 @@ import express from "express";
 import { createServer, type Server } from "http";
 import passport from "passport";
 import { storage } from "./storage";
-import { reviews, users, taxRules, shippingRateRules, platformSettings, configAudits, productVariants, sanatzarCenters, trainingPrograms, trainingApplications, registeredArtisans, surveyQuestions, categories, artisanWork, products, newsletterSubscriptions, newsletterSignupSchema } from "@shared/schema";
+import { reviews, users, taxRules, shippingRateRules, platformSettings, configAudits, productVariants, sanatzarCenters, trainingPrograms, trainingApplications, registeredArtisans, surveyQuestions, categories, artisanWork, products, newsletterSubscriptions, newsletterSignupSchema, orders, orderItems, stores, vendorSuborders } from "@shared/schema";
 import { db, pool } from "./db";
 import { sql, and, eq, inArray, desc, or } from "drizzle-orm";
 import { setupAuth, isAuthenticated, hashPassword } from "./auth";
@@ -45,6 +45,20 @@ function serializeProduct<T extends { price: number | string }>(product: T): T &
     ...product,
     price: String(product.price),
   };
+}
+
+function formatZodErrors(err: any): string {
+  try {
+    const list = Array.isArray(err?.errors) ? err.errors : [];
+    const msgs = list.map((e: any) => {
+      const path = Array.isArray(e?.path) ? e.path.join('.') : String(e?.path ?? '');
+      const msg = String(e?.message ?? 'Invalid value');
+      return path ? `${path}: ${msg}` : msg;
+    });
+    return msgs.join('; ');
+  } catch {
+    return 'Invalid input';
+  }
 }
 
 const isVendor: RequestHandler = async (req: any, res, next) => {
@@ -1991,12 +2005,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const processedVariants = variants && typeof variants === 'object' ? JSON.stringify(variants) : variants;
-      let validatedData = insertProductSchema.parse({ storeId, variants: processedVariants, ...productData });
+      const normalizedInput = {
+        storeId,
+        title: String(productData.title ?? '').trim(),
+        description: productData.description ?? null,
+        price: String(productData.price ?? ''),
+        stock: Number(productData.stock ?? 0),
+        district: String(productData.district ?? store.district ?? ''),
+        giBrand: String(productData.giBrand ?? (store.giBrands?.[0] ?? '') ),
+        images: Array.isArray(productData.images) ? productData.images : [],
+        category: productData.category ?? 'general',
+        variants: processedVariants,
+        weightKg: productData.weightKg ?? null,
+        lengthCm: productData.lengthCm ?? null,
+        widthCm: productData.widthCm ?? null,
+        heightCm: productData.heightCm ?? null,
+        taxExempt: !!productData.taxExempt,
+      } as any;
+      let validatedData = insertProductSchema.parse(normalizedInput);
       if (Array.isArray(variants)) {
         const variantStockTotal = variants.reduce((s: number, v: any) => s + Number(v?.stock || 0), 0);
         validatedData = { ...validatedData, stock: variantStockTotal } as any;
       }
       const product = await storage.createProduct(validatedData);
+      try {
+        await db.insert(configAudits).values({ entityType: 'product', entityId: product.id, action: 'create', changes: { title: (product as any).title, storeId }, changedBy: req.userId } as any);
+      } catch { }
       if (Array.isArray(variants)) {
         for (const v of variants) {
           const ok = variantSchema.parse(v);
@@ -2021,7 +2055,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error creating product:", error);
       if (error.name === 'ZodError') {
-        return res.status(400).json({ message: "Invalid product data", errors: error.errors });
+        return res.status(400).json({ message: formatZodErrors(error), errors: error.errors });
       }
       res.status(500).json({ message: "Failed to create product" });
     }
@@ -2053,7 +2087,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error updating product:", error);
       if (error.name === 'ZodError') {
-        return res.status(400).json({ message: "Invalid product data", errors: error.errors });
+        return res.status(400).json({ message: formatZodErrors(error), errors: error.errors });
       }
       res.status(500).json({ message: "Failed to update product" });
     }
@@ -2130,7 +2164,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error updating product:", error);
       if (error.name === 'ZodError') {
-        return res.status(400).json({ message: "Invalid product data", errors: error.errors });
+        return res.status(400).json({ message: formatZodErrors(error), errors: error.errors });
       }
       res.status(500).json({ message: "Failed to update product" });
     }
@@ -2603,75 +2637,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
         codReceiptId: orderRef,
       });
 
-      const order = await storage.createOrder(validatedOrder);
-      log(`Order persist: id=${order.id} total=${validatedOrder.total}`);
+      const order = await db.transaction(async (tx) => {
+        const [newOrder] = await tx.insert(orders).values(validatedOrder).returning();
+        log(`Order persist: id=${newOrder.id} total=${validatedOrder.total}`);
 
-      await Promise.all(
-        validatedItems.map((vi) => storage.createOrderItem({ ...vi, orderId: order.id }))
-      );
+        const itemsToInsert = validatedItems.map((vi) => ({
+          ...vi,
+          orderId: newOrder.id,
+        }));
+        await tx.insert(orderItems).values(itemsToInsert);
 
-      for (const vi of validatedItems) {
-        if (vi.variantSku) {
-          try {
-            const current = await storage.getVariantBySku(String(vi.variantSku));
-            if (current) {
-              const newStock = Math.max(0, Number(current.stock || 0) - vi.quantity);
-              await storage.updateProductVariant(current.id, { stock: newStock } as any);
+        for (const vi of validatedItems) {
+          if (vi.variantSku) {
+            try {
+              const [current] = await tx
+                .select()
+                .from(productVariants)
+                .where(eq(productVariants.sku, String(vi.variantSku)));
+              if (current) {
+                const newStock = Math.max(0, Number(current.stock || 0) - vi.quantity);
+                await tx
+                  .update(productVariants)
+                  .set({ stock: newStock as any })
+                  .where(eq(productVariants.id, current.id));
+              }
+            } catch (e) {
+              log(`Variant stock update failed for sku=${String(vi.variantSku)}: ${String((e as any)?.message || e)}`);
+              throw e;
             }
-          } catch { }
-        } else {
-          const p = await storage.getProduct(vi.productId);
-          if (p) {
-            const newStock = Math.max(0, (p.stock || 0) - vi.quantity);
-            await storage.updateProduct(p.id, { stock: newStock });
+          } else {
+            const [p] = await tx.select().from(products).where(eq(products.id, vi.productId));
+            if (p) {
+              const newStock = Math.max(0, (p.stock || 0) - vi.quantity);
+              await tx
+                .update(products)
+                .set({ stock: newStock })
+                .where(eq(products.id, p.id));
+            }
           }
         }
-      }
 
-      try {
         const storeIds = Array.from(new Set(validatedItems.map((it: any) => it.storeId)));
-        const storeMapRows = await Promise.all(storeIds.map(id => storage.getStore(id)));
-        const storeVendorMap = new Map(storeMapRows.filter(Boolean).map(s => [s!.id, s!.vendorId]));
-        const weightByProduct = new Map<string, number>();
-        for (const b of shipRes.breakdown) {
-          weightByProduct.set(b.productId, parseFloat(String(b.weightKg)) || 0);
+        if (storeIds.length > 0) {
+          const storeRows = await tx.select().from(stores).where(inArray(stores.id, storeIds));
+          const storeVendorMap = new Map(storeRows.map((s: any) => [s.id, s.vendorId]));
+          const weightByProduct = new Map<string, number>();
+          for (const b of shipRes.breakdown) {
+            weightByProduct.set(b.productId, parseFloat(String((b as any).weightKg)) || 0);
+          }
+          const totalWeight = Array.from(weightByProduct.values()).reduce((s, w) => s + w, 0);
+          const itemStoreByProduct = new Map<string, string>();
+          for (const it of validatedItems) {
+            itemStoreByProduct.set(it.productId, it.storeId);
+          }
+          const taxByStore = new Map<string, number>();
+          for (const br of taxRes.breakdown) {
+            const sid = itemStoreByProduct.get(br.productId);
+            if (!sid) continue;
+            taxByStore.set(sid, (taxByStore.get(sid) || 0) + (parseFloat(String(br.tax)) || 0));
+          }
+          for (const sid of storeIds) {
+            const itemsForStore = validatedItems.filter((it: any) => it.storeId === sid);
+            const subtotal = itemsForStore.reduce(
+              (s: number, it: any) => s + parseFloat(String(it.price)) * Number(it.quantity),
+              0,
+            );
+            const storeWeight = itemsForStore.reduce(
+              (s: number, it: any) => s + (weightByProduct.get(it.productId) || 0),
+              0,
+            );
+            const shippingAlloc = totalWeight > 0 ? shipRes.amount * (storeWeight / totalWeight) : 0;
+            const taxAlloc = taxByStore.get(sid) || 0;
+            const subTotalRounded = parseFloat(subtotal.toFixed(2));
+            const shipRounded = parseFloat(shippingAlloc.toFixed(2));
+            const taxRounded = parseFloat(taxAlloc.toFixed(2));
+            const totalForStore = parseFloat((subTotalRounded + shipRounded + taxRounded).toFixed(2));
+            const vendorRef = storeVendorMap.get(sid) || null;
+
+            await tx.insert(vendorSuborders).values({
+              orderId: newOrder.id,
+              storeId: sid,
+              vendorRef: vendorRef || null,
+              subtotal: subTotalRounded.toFixed(2) as any,
+              taxAmount: taxRounded.toFixed(2) as any,
+              shippingCost: shipRounded.toFixed(2) as any,
+              total: totalForStore.toFixed(2) as any,
+              status: 'pending',
+            } as any);
+          }
         }
-        const totalWeight = Array.from(weightByProduct.values()).reduce((s, w) => s + w, 0);
-        const itemStoreByProduct = new Map<string, string>();
-        for (const it of validatedItems) {
-          itemStoreByProduct.set(it.productId, it.storeId);
-        }
-        const taxByStore = new Map<string, number>();
-        for (const br of taxRes.breakdown) {
-          const sid = itemStoreByProduct.get(br.productId);
-          if (!sid) continue;
-          taxByStore.set(sid, (taxByStore.get(sid) || 0) + (parseFloat(String(br.tax)) || 0));
-        }
-        for (const sid of storeIds) {
-          const itemsForStore = validatedItems.filter((it: any) => it.storeId === sid);
-          const subtotal = itemsForStore.reduce((s: number, it: any) => s + (parseFloat(String(it.price)) * Number(it.quantity)), 0);
-          const storeWeight = itemsForStore.reduce((s: number, it: any) => s + (weightByProduct.get(it.productId) || 0), 0);
-          const shippingAlloc = totalWeight > 0 ? (shipRes.amount * (storeWeight / totalWeight)) : 0;
-          const taxAlloc = taxByStore.get(sid) || 0;
-          const subTotalRounded = parseFloat(subtotal.toFixed(2));
-          const shipRounded = parseFloat(shippingAlloc.toFixed(2));
-          const taxRounded = parseFloat(taxAlloc.toFixed(2));
-          const totalForStore = parseFloat((subTotalRounded + shipRounded + taxRounded).toFixed(2));
-          const vendorRef = storeVendorMap.get(sid) || null;
-          await storage.createVendorSuborder({
-            orderId: order.id,
-            storeId: sid,
-            vendorRef: vendorRef || null,
-            subtotal: subTotalRounded.toFixed(2) as any,
-            taxAmount: taxRounded.toFixed(2) as any,
-            shippingCost: shipRounded.toFixed(2) as any,
-            total: totalForStore.toFixed(2) as any,
-            status: 'pending',
-          } as any);
-        }
-      } catch (e) {
-        console.error('Vendor suborders creation error:', e);
-      }
+
+        return newOrder;
+      });
 
       if (lowerMethod === 'cod') {
         try {
