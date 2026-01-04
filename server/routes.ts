@@ -862,7 +862,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // Return user without sensitive fields
           try { log(`auth_login_success userId=${fullUser.id} role=${fullUser.role}`); } catch { }
-          res.json(sanitizeUser(fullUser));
+          req.session.save(() => {
+            res.json(sanitizeUser(fullUser));
+          });
         });
       })(req, res, next);
     } catch (error: any) {
@@ -4438,35 +4440,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ work: updated, payout });
     } catch {
       res.status(500).json({ message: 'Failed to approve work' });
-    }
-  });
-
-  // Secure seed endpoint for production database initialization
-  app.post('/api/admin/seed', async (req, res) => {
-    try {
-      // Verify secret token
-      const authHeader = req.headers.authorization;
-      const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
-
-      if (!token || token !== process.env.SEED_SECRET) {
-        return res.status(401).json({ message: "Unauthorized - Invalid seed token" });
-      }
-
-      // Import and run seed function
-      const { seed } = await import('./seed.js');
-      await seed();
-
-      res.json({
-        success: true,
-        message: "Database seeded successfully"
-      });
-    } catch (error: any) {
-      console.error("Error seeding database:", error);
-      res.status(500).json({
-        success: false,
-        message: "Failed to seed database",
-        error: error.message
-      });
     }
   });
 

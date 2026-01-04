@@ -17,10 +17,15 @@ export function getSession() {
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
     conString: process.env.DATABASE_URL,
-    createTableIfMissing: false,
+    createTableIfMissing: true,
     ttl: sessionTtl,
     tableName: "sessions",
   });
+  try {
+    (sessionStore as any).on?.("error", (err: any) => {
+      console.error("Session store error:", err);
+    });
+  } catch {}
   return session({
     secret: process.env.SESSION_SECRET,
     store: sessionStore,
@@ -28,7 +33,7 @@ export function getSession() {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: false,
       sameSite: "lax",
       maxAge: sessionTtl,
     },
@@ -36,7 +41,7 @@ export function getSession() {
 }
 
 export async function setupAuth(app: Express) {
-  app.set("trust proxy", 1);
+  app.set("trust proxy", true);
   app.use(getSession());
   app.use(passport.initialize());
   app.use(passport.session());
